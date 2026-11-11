@@ -3,13 +3,12 @@ name = "aether-browser"
 version = "0.5.0"
 edition = "2021"
 authors = ["Aether Team"]
-description = "Aether Browser — Ультралегкий браузер на Rust с поддержкой многовкладочности, режимом инкогнито, медиа-контролем и скачиванием видео."
+description = "Aether Browser — Ультралегкий и быстрый браузер на Rust с защитой от рекламы, интеграцией Google, YouTube, VK и медиа-контролем."
 
 [dependencies]
 tao = "0.30"
 wry = "0.47"
 directories = "5.0"
-rfd = "0.14"
 
 [profile.release]
 opt-level = 3

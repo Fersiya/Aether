@@ -12,6 +12,7 @@ permissions:
 jobs:
   build-and-release:
     strategy:
+      fail-fast: false
       matrix:
         include:
           - os: windows-latest
@@ -42,7 +43,7 @@ jobs:
       - name: Build release binary
         run: cargo build --release
 
-      - name: Rename artifact
+      - name: Prepare binary artifact
         shell: bash
         run: |
           cp ${{ matrix.binary_path }} ${{ matrix.artifact_name }}
