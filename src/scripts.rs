@@ -1,7 +1,10 @@
-//! Встроенный рантайм Aether Browser v0.6.0 (Arc / Zen Style):
+//! Встроенный рантайм Aether Browser v0.6.1 (Arc / Zen Style):
 //! - Мощный вертикальный сайдбар слева (боковые вкладки, быстрые сервисы, омнибокс)
-//! - Чистый полноэкранный веб-контент справа без навязчивых оверлеев
-//! - Настоящие независимые вкладки в памяти без перезагрузки страниц
+//! - Чистый веб-контент справа без навязчивых оверлеев на поисковую строку YouTube
+//! - Сохранение и переключение вкладок через window.name
+//! - Кнопка и горячая клавиша Ctrl+B для сворачивания/разворачивания сайдбара
+//! - Полный иммунитет к CSP YouTube через Trusted Types
+//! - Встроенный AdBlocker для YouTube
 
 pub const START_PAGE_HTML: &str = r###"<!DOCTYPE html>
 <html lang="ru">
@@ -230,8 +233,7 @@ pub const START_PAGE_HTML: &str = r###"<!DOCTYPE html>
     <div id="aether-hints">
         <span class="aether-hint-pill"><b>Ctrl + T</b> Новая вкладка</span>
         <span class="aether-hint-pill"><b>Ctrl + W</b> Закрыть вкладку</span>
-        <span class="aether-hint-pill"><b>Ctrl + B</b> Скрыть сайдбар</span>
-        <span class="aether-hint-pill"><b>Ctrl + Tab</b> Переключить вкладку</span>
+        <span class="aether-hint-pill"><b>Ctrl + B</b> Скрыть / открыть сайдбар</span>
         <span class="aether-hint-pill"><b>Ctrl + M</b> Только аудио</span>
         <span class="aether-hint-pill"><b>Ctrl + D</b> Скачать видео</span>
     </div>
@@ -281,552 +283,822 @@ pub const START_PAGE_HTML: &str = r###"<!DOCTYPE html>
 </body>
 </html>"###;
 
-pub const SIDEBAR_HTML: &str = r###"<!DOCTYPE html>
-<html lang="ru">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Aether Sidebar</title>
-    <style>
-        * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; }
-        body {
-            height: 100vh;
-            background: linear-gradient(180deg, #090514 0%, #0d071a 50%, #070310 100%);
-            border-right: 1px solid rgba(168, 85, 247, 0.22);
-            color: #f8fafc;
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-            display: flex;
-            flex-direction: column;
-            overflow: hidden;
-            padding: 14px 10px 12px;
-        }
+pub fn get_core_script(start_url: &str) -> String {
+    format!(
+        "window.__AETHER_GLOBAL_START_URL__ = {:?};\n{}",
+        start_url,
+        AETHER_CORE_SCRIPT
+    )
+}
 
-        /* 1. Header */
-        .aether-header {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            padding: 2px 6px 12px;
-        }
-        .aether-brand {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            font-size: 15px;
-            font-weight: 700;
-            letter-spacing: 2px;
-            background: linear-gradient(135deg, #f8fafc 20%, #c084fc 100%);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-        }
-        .aether-brand-icon {
-            font-size: 16px;
-            filter: drop-shadow(0 0 10px rgba(168, 85, 247, 0.7));
-            -webkit-text-fill-color: initial;
-        }
-        .aether-toggle-btn {
-            background: rgba(255, 255, 255, 0.05);
-            border: 1px solid rgba(168, 85, 247, 0.25);
-            border-radius: 6px;
-            width: 26px;
-            height: 26px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            color: #c084fc;
-            cursor: pointer;
-            transition: all 0.15s ease;
-        }
-        .aether-toggle-btn:hover {
-            background: rgba(168, 85, 247, 0.25);
-            color: #ffffff;
-            box-shadow: 0 0 10px rgba(168, 85, 247, 0.4);
-        }
-
-        /* 2. Omnibox & Nav */
-        .aether-nav-row {
-            display: flex;
-            align-items: center;
-            gap: 4px;
-            margin-bottom: 8px;
-            padding: 0 2px;
-        }
-        .aether-nav-btn {
-            width: 26px;
-            height: 26px;
-            border-radius: 6px;
-            background: rgba(255, 255, 255, 0.04);
-            border: 1px solid rgba(255, 255, 255, 0.06);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            color: #94a3b8;
-            cursor: pointer;
-            transition: all 0.15s ease;
-        }
-        .aether-nav-btn:hover {
-            background: rgba(168, 85, 247, 0.2);
-            color: #ffffff;
-            border-color: rgba(168, 85, 247, 0.35);
-        }
-        .aether-omnibox-wrap {
-            flex: 1;
-            position: relative;
-            display: flex;
-            align-items: center;
-        }
-        .aether-omnibox-input {
-            width: 100%;
-            background: rgba(20, 12, 38, 0.85);
-            border: 1px solid rgba(168, 85, 247, 0.35);
-            border-radius: 8px;
-            padding: 5px 8px 5px 24px;
-            font-size: 12px;
-            color: #ffffff;
-            outline: none;
-            transition: all 0.2s ease;
-        }
-        .aether-omnibox-input:focus {
-            border-color: #c084fc;
-            box-shadow: 0 0 12px rgba(168, 85, 247, 0.35);
-            background: rgba(28, 16, 52, 0.95);
-        }
-        .aether-omnibox-input::placeholder { color: #64748b; }
-        .aether-omnibox-icon {
-            position: absolute;
-            left: 7px;
-            font-size: 11px;
-            color: #a855f7;
-            pointer-events: none;
-        }
-
-        /* 3. Favorites / Pinned Dock */
-        .aether-favorites {
-            display: grid;
-            grid-template-columns: repeat(4, 1fr);
-            gap: 6px;
-            margin-bottom: 14px;
-            padding: 0 2px;
-        }
-        .aether-fav-tile {
-            height: 40px;
-            background: rgba(22, 14, 42, 0.65);
-            border: 1px solid rgba(168, 85, 247, 0.22);
-            border-radius: 9px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            cursor: pointer;
-            transition: all 0.18s cubic-bezier(0.16, 1, 0.3, 1);
-            position: relative;
-        }
-        .aether-fav-tile:hover {
-            background: rgba(36, 20, 68, 0.95);
-            border-color: rgba(192, 132, 252, 0.6);
-            transform: translateY(-2px);
-            box-shadow: 0 6px 16px rgba(0, 0, 0, 0.4), 0 0 12px rgba(168, 85, 247, 0.35);
-        }
-        .aether-fav-active-dot {
-            position: absolute;
-            bottom: 3px;
-            width: 4px;
-            height: 4px;
-            border-radius: 50%;
-            background: #c084fc;
-            box-shadow: 0 0 6px #c084fc;
-            display: none;
-        }
-
-        /* 4. Tabs Section */
-        .aether-tabs-header {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            padding: 0 6px 6px;
-            font-size: 11px;
-            font-weight: 600;
-            color: #94a3b8;
-            letter-spacing: 0.8px;
-            text-transform: uppercase;
-        }
-        .aether-new-tab-btn {
-            background: rgba(147, 51, 234, 0.25);
-            border: 1px solid rgba(168, 85, 247, 0.35);
-            border-radius: 5px;
-            width: 20px;
-            height: 20px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            color: #d8b4fe;
-            font-size: 13px;
-            cursor: pointer;
-            transition: all 0.15s ease;
-        }
-        .aether-new-tab-btn:hover {
-            background: rgba(168, 85, 247, 0.5);
-            color: #ffffff;
-            box-shadow: 0 0 8px rgba(168, 85, 247, 0.5);
-            transform: scale(1.08);
-        }
-
-        .aether-tabs-list {
-            flex: 1;
-            overflow-y: auto;
-            overflow-x: hidden;
-            display: flex;
-            flex-direction: column;
-            gap: 4px;
-            padding: 2px;
-        }
-        .aether-tabs-list::-webkit-scrollbar { width: 3px; }
-        .aether-tabs-list::-webkit-scrollbar-thumb { background: rgba(168, 85, 247, 0.3); border-radius: 3px; }
-
-        .aether-tab-item {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            padding: 6px 9px;
-            border-radius: 8px;
-            font-size: 12.5px;
-            color: #cbd5e1;
-            cursor: pointer;
-            border: 1px solid transparent;
-            transition: all 0.15s ease;
-        }
-        .aether-tab-item:hover {
-            background: rgba(255, 255, 255, 0.05);
-            color: #ffffff;
-        }
-        .aether-tab-item.active {
-            background: linear-gradient(135deg, rgba(147, 51, 234, 0.35), rgba(124, 58, 237, 0.2));
-            border-color: rgba(192, 132, 252, 0.55);
-            color: #ffffff;
-            font-weight: 500;
-            box-shadow: 0 4px 14px rgba(0, 0, 0, 0.3), 0 0 10px rgba(168, 85, 247, 0.2);
-        }
-        .aether-tab-badge {
-            width: 16px;
-            height: 16px;
-            flex-shrink: 0;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 12px;
-        }
-        .aether-tab-title {
-            flex: 1;
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
-        }
-        .aether-tab-close {
-            opacity: 0;
-            font-size: 12px;
-            color: #94a3b8;
-            padding: 2px 4px;
-            border-radius: 4px;
-            transition: all 0.12s;
-        }
-        .aether-tab-item:hover .aether-tab-close {
-            opacity: 0.75;
-        }
-        .aether-tab-close:hover {
-            opacity: 1 !important;
-            color: #fca5a5;
-            background: rgba(239, 68, 68, 0.25);
-        }
-
-        /* 5. Bottom Utilities Dock */
-        .aether-dock {
-            margin-top: auto;
-            padding-top: 10px;
-            border-top: 1px solid rgba(255, 255, 255, 0.08);
-            display: flex;
-            align-items: center;
-            justify-content: space-around;
-        }
-        .aether-dock-btn {
-            width: 32px;
-            height: 32px;
-            border-radius: 8px;
-            background: rgba(255, 255, 255, 0.04);
-            border: 1px solid rgba(255, 255, 255, 0.06);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            color: #94a3b8;
-            cursor: pointer;
-            transition: all 0.15s ease;
-        }
-        .aether-dock-btn:hover {
-            background: rgba(168, 85, 247, 0.25);
-            color: #d8b4fe;
-            border-color: rgba(168, 85, 247, 0.45);
-            box-shadow: 0 0 10px rgba(168, 85, 247, 0.3);
-            transform: translateY(-1px);
-        }
-    </style>
-</head>
-<body>
-    <!-- 1. Header -->
-    <div class="aether-header">
-        <div class="aether-brand">
-            <span class="aether-brand-icon">🌌</span>
-            <span>AETHER</span>
-        </div>
-        <button id="btn-toggle-sidebar" class="aether-toggle-btn" title="Свернуть / развернуть (Ctrl + B)">
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="3" x2="9" y2="21"/></svg>
-        </button>
-    </div>
-
-    <!-- 2. Omnibox & Navigation -->
-    <div class="aether-nav-row">
-        <button id="btn-back" class="aether-nav-btn" title="Назад (Alt + ←)">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
-        </button>
-        <button id="btn-forward" class="aether-nav-btn" title="Вперед (Alt + →)">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
-        </button>
-        <button id="btn-reload" class="aether-nav-btn" title="Обновить (F5)">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg>
-        </button>
-        <div class="aether-omnibox-wrap">
-            <span class="aether-omnibox-icon">🔍</span>
-            <input id="omnibox-input" class="aether-omnibox-input" type="text" placeholder="Поиск или URL..." autocomplete="off" />
-        </div>
-    </div>
-
-    <!-- 3. Favorites (Pinned Apps) -->
-    <div class="aether-favorites">
-        <div class="aether-fav-tile" title="YouTube" onclick="openFavorite('https://www.youtube.com')">
-            <svg viewBox="0 0 24 24" width="20" height="20" fill="#ff0000"><path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/></svg>
-            <div id="dot-yt" class="aether-fav-active-dot"></div>
-        </div>
-        <div class="aether-fav-tile" title="ВКонтакте" onclick="openFavorite('https://vk.com')">
-            <svg viewBox="0 0 24 24" width="20" height="20" fill="#0077ff"><path d="M15.684 0H8.316C2.992 0 0 2.992 0 8.316v7.368C0 21.008 2.992 24 8.316 24h7.368C21.008 24 24 21.008 24 15.684V8.316C24 2.992 21.008 0 15.684 0zm3.692 17.123h-1.744c-.66 0-.862-.525-2.05-1.714-1.036-1.01-1.496-1.144-1.75-1.144-.356 0-.457.102-.457.593v1.642c0 .423-.135.686-1.253.686-1.846 0-3.896-1.12-5.336-3.201-2.17-3.074-2.778-5.386-2.778-5.86 0-.254.102-.491.593-.491h1.745c.44 0 .61.203.78.677.847 2.49 2.27 4.675 2.862 4.675.22 0 .322-.102.322-.66V11.23c-.068-1.185-.695-1.287-.695-1.71 0-.203.17-.406.44-.406h2.744c.373 0 .508.186.508.626v3.354c0 .355.153.474.254.474.22 0 .407-.119.814-.525 1.27-1.423 2.185-3.642 2.185-3.642.119-.254.339-.491.78-.491h1.744c.525 0 .644.27.525.643-.22.983-2.287 3.913-2.388 4.082-.204.322-.288.474 0 .864.203.27 1.05 1.016 1.592 1.643.999 1.152 1.762 2.117 1.965 2.778.084.271-.102.66-.542.66z"/></svg>
-            <div id="dot-vk" class="aether-fav-active-dot"></div>
-        </div>
-        <div class="aether-fav-tile" title="Telegram" onclick="openFavorite('https://web.telegram.org')">
-            <svg viewBox="0 0 24 24" width="20" height="20" fill="#29b6f6"><path d="M12 0C5.373 0 0 5.373 0 12s5.373 12 12 12 12-5.373 12-12S18.627 0 12 0zm5.894 8.221l-1.97 9.28c-.145.658-.537.818-1.084.508l-3-2.21-1.446 1.394c-.16.16-.295.295-.605.295l.213-3.053 5.56-5.023c.242-.213-.054-.333-.373-.121l-6.871 4.326-2.962-.924c-.643-.204-.657-.643.136-.953l11.57-4.458c.538-.196 1.006.128.832.935z"/></svg>
-            <div id="dot-tg" class="aether-fav-active-dot"></div>
-        </div>
-        <div class="aether-fav-tile" title="GitHub" onclick="openFavorite('https://github.com')">
-            <svg viewBox="0 0 24 24" width="20" height="20" fill="#ffffff"><path fill-rule="evenodd" clip-rule="evenodd" d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.53 1.032 1.53 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z"/></svg>
-            <div id="dot-gh" class="aether-fav-active-dot"></div>
-        </div>
-    </div>
-
-    <!-- 4. Tabs List -->
-    <div class="aether-tabs-header">
-        <span id="tabs-counter">Вкладки</span>
-        <button id="btn-new-tab" class="aether-new-tab-btn" title="Новая вкладка (Ctrl + T)">+</button>
-    </div>
-    <div id="tabs-list" class="aether-tabs-list"></div>
-
-    <!-- 5. Bottom Utilities Dock -->
-    <div class="aether-dock">
-        <button id="btn-audio" class="aether-dock-btn" title="Режим 'Только аудио' (Ctrl + M) — экономия GPU">
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M3 18v-6a9 9 0 0 1 18 0v6"/><path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3zM3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z"/></svg>
-        </button>
-        <button id="btn-pip" class="aether-dock-btn" title="Картинка в картинке / PiP (Ctrl + P)">
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><rect x="2" y="3" width="20" height="14" rx="2"/><rect x="12" y="9" width="8" height="6" rx="1"/></svg>
-        </button>
-        <button id="btn-download" class="aether-dock-btn" title="Скачать видео / yt-dlp (Ctrl + D)">
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-        </button>
-        <button id="btn-home" class="aether-dock-btn" title="Домашняя страница Aether">
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
-        </button>
-    </div>
-
-    <script>
-        function sendIpc(msg) {
-            if (window.ipc && window.ipc.postMessage) {
-                window.ipc.postMessage(msg);
-            }
-        }
-
-        // Navigation
-        document.getElementById('btn-back').onclick = () => sendIpc('back');
-        document.getElementById('btn-forward').onclick = () => sendIpc('forward');
-        document.getElementById('btn-reload').onclick = () => sendIpc('reload');
-        document.getElementById('btn-new-tab').onclick = () => sendIpc('new_tab:');
-        document.getElementById('btn-home').onclick = () => sendIpc('go_home');
-        document.getElementById('btn-toggle-sidebar').onclick = () => sendIpc('toggle_sidebar');
-
-        // Dock tools
-        document.getElementById('btn-audio').onclick = () => sendIpc('toggle_audio');
-        document.getElementById('btn-pip').onclick = () => sendIpc('toggle_pip');
-        document.getElementById('btn-download').onclick = () => sendIpc('download');
-
-        // Omnibox
-        const omnibox = document.getElementById('omnibox-input');
-        omnibox.addEventListener('keydown', (e) => {
-            if (e.key === 'Enter') {
-                const val = omnibox.value.trim();
-                if (!val) return;
-                sendIpc('navigate:' + val);
-            }
-        });
-
-        // Open Favorite (open or switch)
-        function openFavorite(url) {
-            sendIpc('open_favorite:' + url);
-        }
-
-        function getTabIcon(url, title) {
-            const u = (url || '').toLowerCase();
-            if (u.includes('youtube.com')) return '<span style="color:#ef4444; font-size:13px;">▶</span>';
-            if (u.includes('vk.com')) return '<span style="color:#0077ff; font-weight:bold; font-size:11px;">VK</span>';
-            if (u.includes('telegram.org')) return '<span style="color:#38bdf8; font-size:12px;">✈</span>';
-            if (u.includes('github.com')) return '<span style="color:#f8fafc; font-size:12px;">🐙</span>';
-            if (u.includes('start.html')) return '<span style="color:#c084fc; font-size:12px;">🌌</span>';
-            return '<span style="color:#94a3b8; font-size:12px;">🌐</span>';
-        }
-
-        // Called from Rust via evaluate_script
-        window.updateTabs = function(tabs, activeId) {
-            const list = document.getElementById('tabs-list');
-            list.innerHTML = '';
-            document.getElementById('tabs-counter').textContent = 'Вкладки (' + tabs.length + ')';
-
-            // Check favorite dots
-            let hasYt = false, hasVk = false, hasTg = false, hasGh = false;
-
-            tabs.forEach(tab => {
-                const u = (tab.url || '').toLowerCase();
-                if (u.includes('youtube.com')) hasYt = true;
-                if (u.includes('vk.com')) hasVk = true;
-                if (u.includes('telegram.org')) hasTg = true;
-                if (u.includes('github.com')) hasGh = true;
-
-                const item = document.createElement('div');
-                item.className = 'aether-tab-item' + (tab.id === activeId ? ' active' : '');
-                
-                const icon = document.createElement('div');
-                icon.className = 'aether-tab-badge';
-                icon.innerHTML = getTabIcon(tab.url, tab.title);
-
-                const title = document.createElement('div');
-                title.className = 'aether-tab-title';
-                title.textContent = tab.title || 'Новая вкладка';
-
-                const close = document.createElement('div');
-                close.className = 'aether-tab-close';
-                close.textContent = '✕';
-                close.onclick = (e) => {
-                    e.stopPropagation();
-                    sendIpc('close_tab:' + tab.id);
-                };
-
-                item.onclick = () => {
-                    if (tab.id !== activeId) {
-                        sendIpc('switch_tab:' + tab.id);
-                    }
-                };
-
-                item.appendChild(icon);
-                item.appendChild(title);
-                item.appendChild(close);
-                list.appendChild(item);
-
-                if (tab.id === activeId) {
-                    const isStart = (tab.url || '').includes('start.html');
-                    omnibox.value = isStart ? '' : (tab.url || '');
-                }
-            });
-
-            document.getElementById('dot-yt').style.display = hasYt ? 'block' : 'none';
-            document.getElementById('dot-vk').style.display = hasVk ? 'block' : 'none';
-            document.getElementById('dot-tg').style.display = hasTg ? 'block' : 'none';
-            document.getElementById('dot-gh').style.display = hasGh ? 'block' : 'none';
-        };
-
-        // Keyboard navigation inside sidebar
-        window.addEventListener('keydown', (e) => {
-            const ctrl = e.ctrlKey || e.metaKey;
-            if (ctrl && (e.key === 't' || e.key === 'T' || e.key === 'е' || e.key === 'Е')) {
-                e.preventDefault();
-                sendIpc('new_tab:');
-            } else if (ctrl && (e.key === 'w' || e.key === 'W' || e.key === 'ц' || e.key === 'Ц')) {
-                e.preventDefault();
-                sendIpc('close_active_tab');
-            } else if (ctrl && (e.key === 'b' || e.key === 'B' || e.key === 'и' || e.key === 'И')) {
-                e.preventDefault();
-                sendIpc('toggle_sidebar');
-            } else if (ctrl && (e.key === 'l' || e.key === 'L' || e.key === 'д' || e.key === 'Д') || e.key === 'F6') {
-                e.preventDefault();
-                omnibox.focus();
-                omnibox.select();
-            }
-        });
-    </script>
-</body>
-</html>
-"###;
-
-pub const CONTENT_SCRIPT: &str = r###"
+pub const AETHER_CORE_SCRIPT: &str = r###"
 (() => {
-    // 1. Уведомление об изменении URL или заголовка
-    function notify() {
+    try {
+        if (window.top !== window.self) return;
+    } catch (_) {
+        return;
+    }
+
+    if (window.__AETHER_CORE_ATTACHED__) return;
+    window.__AETHER_CORE_ATTACHED__ = true;
+
+    // 1. TRUSTED TYPES CSP BYPASS (YouTube, Google, GitHub)
+    let aetherPolicy = {
+        createHTML: (s) => s,
+        createScript: (s) => s,
+        createScriptURL: (s) => s
+    };
+
+    try {
+        if (window.trustedTypes && typeof window.trustedTypes.createPolicy === 'function') {
+            try {
+                window.trustedTypes.createPolicy('default', {
+                    createHTML: (s) => s,
+                    createScript: (s) => s,
+                    createScriptURL: (s) => s
+                });
+            } catch (_) {}
+            try {
+                aetherPolicy = window.trustedTypes.createPolicy('aether-trusted-policy', {
+                    createHTML: (s) => s,
+                    createScript: (s) => s,
+                    createScriptURL: (s) => s
+                });
+            } catch (_) {}
+        }
+    } catch (_) {}
+
+    function safeSetHTML(element, htmlString) {
+        if (!element) return;
         try {
-            if (window.ipc && window.ipc.postMessage) {
-                const title = document.title || window.location.hostname || "Вкладка";
-                window.ipc.postMessage("tab_navigated:" + title + "|||" + window.location.href);
+            if (aetherPolicy && typeof aetherPolicy.createHTML === 'function') {
+                element.innerHTML = aetherPolicy.createHTML(htmlString);
+                return;
             }
+        } catch (_) {}
+        try {
+            element.innerHTML = htmlString;
         } catch (_) {}
     }
 
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', notify);
-    } else {
-        notify();
+    function getStartPageUrl() {
+        if (window.__AETHER_GLOBAL_START_URL__) {
+            return window.__AETHER_GLOBAL_START_URL__;
+        }
+        const state = getTabsState();
+        const found = state.tabs.find(t => t.url && t.url.includes("start.html"));
+        if (found) return found.url;
+        return "https://www.google.com";
     }
-    window.addEventListener('load', notify);
-    window.addEventListener('yt-navigate-finish', notify);
-    window.addEventListener('popstate', notify);
 
-    let lastTitle = "";
-    let lastUrl = "";
-    setInterval(() => {
-        if (document.title !== lastTitle || window.location.href !== lastUrl) {
-            lastTitle = document.title;
-            lastUrl = window.location.href;
-            notify();
-        }
-    }, 400);
-
-    // 2. Горячие клавиши браузера
-    window.addEventListener('keydown', (e) => {
-        const ctrl = e.ctrlKey || e.metaKey;
-        if (ctrl && (e.key === 't' || e.key === 'T' || e.key === 'е' || e.key === 'Е')) {
-            e.preventDefault();
-            if (window.ipc) window.ipc.postMessage("new_tab:");
-        } else if (ctrl && (e.key === 'w' || e.key === 'W' || e.key === 'ц' || e.key === 'Ц')) {
-            e.preventDefault();
-            if (window.ipc) window.ipc.postMessage("close_active_tab");
-        } else if (ctrl && (e.key === 'b' || e.key === 'B' || e.key === 'и' || e.key === 'И')) {
-            e.preventDefault();
-            if (window.ipc) window.ipc.postMessage("toggle_sidebar");
-        } else if (ctrl && e.key === 'Tab') {
-            e.preventDefault();
-            if (window.ipc) window.ipc.postMessage(e.shiftKey ? "prev_tab" : "next_tab");
-        }
-    });
-
-    // 3. Авто-перехват ссылок target="_blank"
-    document.addEventListener('click', (e) => {
+    // 2. УПРАВЛЕНИЕ СОСТОЯНИЕМ ВКЛАДОК (Менеджер вкладок в window.name)
+    function getTabsState() {
         try {
-            const link = e.target && e.target.closest ? e.target.closest('a') : null;
-            if (link && link.target === '_blank' && link.href && !link.href.startsWith('javascript:')) {
-                e.preventDefault();
-                if (window.ipc) window.ipc.postMessage("new_tab:" + link.href);
+            if (window.name && window.name.startsWith("__AETHER_STATE__=")) {
+                const json = window.name.substring(17);
+                const parsed = JSON.parse(json);
+                if (parsed && Array.isArray(parsed.tabs) && parsed.tabs.length > 0) {
+                    return parsed;
+                }
             }
         } catch (_) {}
-    }, true);
 
-    // 4. YouTube AdBlocker
+        const startUrl = window.location.href;
+        const initialTitle = startUrl.includes("start.html") ? "Старт" : (document.title || "Вкладка");
+        return {
+            activeTabId: 1,
+            nextTabId: 2,
+            sidebarCollapsed: false,
+            tabs: [
+                { id: 1, title: initialTitle, url: startUrl }
+            ]
+        };
+    }
+
+    function saveTabsState(state) {
+        try {
+            window.name = "__AETHER_STATE__=" + JSON.stringify(state);
+        } catch (_) {}
+    }
+
+    function updateCurrentTabInfo() {
+        const state = getTabsState();
+        let tab = state.tabs.find(t => t.id === state.activeTabId);
+        const curUrl = window.location.href;
+        const curTitle = curUrl.includes("start.html") ? "Старт" : (document.title || (location.hostname.replace("www.", "") || "Вкладка"));
+
+        if (!tab) {
+            tab = { id: state.activeTabId, title: curTitle, url: curUrl };
+            state.tabs.push(tab);
+        } else {
+            tab.url = curUrl;
+            if (curTitle && curTitle !== "YouTube" && curTitle !== "Вкладка") {
+                tab.title = curTitle;
+            } else if (!tab.title || tab.title === "Новая вкладка") {
+                tab.title = curTitle;
+            }
+        }
+        saveTabsState(state);
+    }
+
+    updateCurrentTabInfo();
+
+    // 3. СТИЛИ И ИНЪЕКЦИЯ САЙДБАРА ARC
+    const SIDEBAR_CSS = `
+        :root {
+            --aether-sidebar-w: 240px;
+        }
+        html {
+            margin-left: 240px !important;
+            width: calc(100vw - 240px) !important;
+            max-width: calc(100vw - 240px) !important;
+            box-sizing: border-box !important;
+            transition: margin-left 0.22s cubic-bezier(0.16, 1, 0.3, 1), width 0.22s cubic-bezier(0.16, 1, 0.3, 1) !important;
+        }
+        body {
+            width: 100% !important;
+            max-width: 100% !important;
+        }
+        #masthead-container, #guide, #header, header[role="banner"] {
+            left: 240px !important;
+            width: calc(100vw - 240px) !important;
+            transition: left 0.22s cubic-bezier(0.16, 1, 0.3, 1), width 0.22s cubic-bezier(0.16, 1, 0.3, 1) !important;
+        }
+
+        html.aether-collapsed {
+            margin-left: 0 !important;
+            width: 100vw !important;
+            max-width: 100vw !important;
+        }
+        html.aether-collapsed #masthead-container, html.aether-collapsed #guide, html.aether-collapsed #header {
+            left: 0 !important;
+            width: 100vw !important;
+        }
+
+        #aether-arc-sidebar {
+            position: fixed !important;
+            top: 0 !important;
+            left: 0 !important;
+            width: 240px !important;
+            height: 100vh !important;
+            background: linear-gradient(180deg, #090514 0%, #0d071a 50%, #070310 100%) !important;
+            border-right: 1px solid rgba(168, 85, 247, 0.25) !important;
+            box-shadow: 4px 0 24px rgba(0, 0, 0, 0.65) !important;
+            z-index: 2147483640 !important;
+            display: flex !important;
+            flex-direction: column !important;
+            padding: 12px 10px 10px !important;
+            box-sizing: border-box !important;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif !important;
+            user-select: none !important;
+            color: #f8fafc !important;
+            transition: transform 0.22s cubic-bezier(0.16, 1, 0.3, 1) !important;
+        }
+        #aether-arc-sidebar.collapsed {
+            transform: translateX(-240px) !important;
+        }
+
+        /* Expand floating button */
+        #aether-expand-pill {
+            position: fixed !important;
+            top: 10px !important;
+            left: 10px !important;
+            width: 32px !important;
+            height: 32px !important;
+            border-radius: 9px !important;
+            background: rgba(18, 12, 33, 0.9) !important;
+            border: 1px solid rgba(168, 85, 247, 0.45) !important;
+            color: #c084fc !important;
+            display: none !important;
+            align-items: center !important;
+            justify-content: center !important;
+            cursor: pointer !important;
+            z-index: 2147483647 !important;
+            box-shadow: 0 4px 14px rgba(0, 0, 0, 0.6), 0 0 10px rgba(168, 85, 247, 0.35) !important;
+            transition: all 0.18s ease !important;
+        }
+        #aether-expand-pill:hover {
+            background: rgba(30, 18, 58, 0.95) !important;
+            color: #ffffff !important;
+            border-color: #c084fc !important;
+            transform: scale(1.08) !important;
+        }
+        html.aether-collapsed #aether-expand-pill {
+            display: flex !important;
+        }
+
+        /* Sidebar Elements */
+        .aether-sb-header {
+            display: flex !important;
+            align-items: center !important;
+            justify-content: space-between !important;
+            padding: 2px 4px 10px !important;
+        }
+        .aether-sb-brand {
+            display: flex !important;
+            align-items: center !important;
+            gap: 8px !important;
+            font-size: 14.5px !important;
+            font-weight: 700 !important;
+            letter-spacing: 2px !important;
+            background: linear-gradient(135deg, #f8fafc 20%, #c084fc 100%) !important;
+            -webkit-background-clip: text !important;
+            -webkit-text-fill-color: transparent !important;
+        }
+        .aether-sb-brand-icon {
+            font-size: 16px !important;
+            -webkit-text-fill-color: initial !important;
+        }
+        .aether-sb-btn-box {
+            display: flex !important;
+            align-items: center !important;
+            gap: 4px !important;
+        }
+        .aether-sb-tool-btn {
+            background: rgba(255, 255, 255, 0.05) !important;
+            border: 1px solid rgba(168, 85, 247, 0.25) !important;
+            border-radius: 6px !important;
+            width: 25px !important;
+            height: 25px !important;
+            display: flex !important;
+            align-items: center !important;
+            justify-content: center !important;
+            color: #c084fc !important;
+            cursor: pointer !important;
+            transition: all 0.15s ease !important;
+        }
+        .aether-sb-tool-btn:hover {
+            background: rgba(168, 85, 247, 0.25) !important;
+            color: #ffffff !important;
+            box-shadow: 0 0 10px rgba(168, 85, 247, 0.4) !important;
+        }
+
+        /* Omnibox */
+        .aether-sb-nav-row {
+            display: flex !important;
+            align-items: center !important;
+            gap: 4px !important;
+            margin-bottom: 8px !important;
+        }
+        .aether-sb-nav-btn {
+            width: 24px !important;
+            height: 24px !important;
+            border-radius: 6px !important;
+            background: rgba(255, 255, 255, 0.04) !important;
+            border: 1px solid rgba(255, 255, 255, 0.06) !important;
+            display: flex !important;
+            align-items: center !important;
+            justify-content: center !important;
+            color: #94a3b8 !important;
+            cursor: pointer !important;
+            transition: all 0.15s ease !important;
+        }
+        .aether-sb-nav-btn:hover {
+            background: rgba(168, 85, 247, 0.2) !important;
+            color: #ffffff !important;
+            border-color: rgba(168, 85, 247, 0.35) !important;
+        }
+        .aether-sb-omnibox-wrap {
+            flex: 1 !important;
+            position: relative !important;
+            display: flex !important;
+            align-items: center !important;
+        }
+        .aether-sb-omnibox-input {
+            width: 100% !important;
+            background: rgba(20, 12, 38, 0.85) !important;
+            border: 1px solid rgba(168, 85, 247, 0.35) !important;
+            border-radius: 7px !important;
+            padding: 4px 6px 4px 22px !important;
+            font-size: 11.5px !important;
+            color: #ffffff !important;
+            outline: none !important;
+            transition: all 0.2s ease !important;
+            box-sizing: border-box !important;
+        }
+        .aether-sb-omnibox-input:focus {
+            border-color: #c084fc !important;
+            box-shadow: 0 0 10px rgba(168, 85, 247, 0.35) !important;
+            background: rgba(28, 16, 52, 0.95) !important;
+        }
+        .aether-sb-omnibox-icon {
+            position: absolute !important;
+            left: 6px !important;
+            font-size: 10px !important;
+            color: #a855f7 !important;
+            pointer-events: none !important;
+        }
+
+        /* Favorites / Pinned Dock */
+        .aether-sb-favorites {
+            display: grid !important;
+            grid-template-columns: repeat(4, 1fr) !important;
+            gap: 5px !important;
+            margin-bottom: 12px !important;
+        }
+        .aether-sb-fav-tile {
+            height: 38px !important;
+            background: rgba(22, 14, 42, 0.65) !important;
+            border: 1px solid rgba(168, 85, 247, 0.22) !important;
+            border-radius: 8px !important;
+            display: flex !important;
+            align-items: center !important;
+            justify-content: center !important;
+            cursor: pointer !important;
+            transition: all 0.16s cubic-bezier(0.16, 1, 0.3, 1) !important;
+            position: relative !important;
+        }
+        .aether-sb-fav-tile:hover {
+            background: rgba(36, 20, 68, 0.95) !important;
+            border-color: rgba(192, 132, 252, 0.6) !important;
+            transform: translateY(-2px) !important;
+            box-shadow: 0 5px 14px rgba(0, 0, 0, 0.4), 0 0 10px rgba(168, 85, 247, 0.3) !important;
+        }
+        .aether-sb-active-dot {
+            position: absolute !important;
+            bottom: 3px !important;
+            width: 4px !important;
+            height: 4px !important;
+            border-radius: 50% !important;
+            background: #c084fc !important;
+            box-shadow: 0 0 5px #c084fc !important;
+            display: none !important;
+        }
+
+        /* Tabs Section */
+        .aether-sb-tabs-header {
+            display: flex !important;
+            align-items: center !important;
+            justify-content: space-between !important;
+            padding: 0 4px 6px !important;
+            font-size: 10.5px !important;
+            font-weight: 600 !important;
+            color: #94a3b8 !important;
+            letter-spacing: 0.8px !important;
+            text-transform: uppercase !important;
+        }
+        .aether-sb-new-tab-btn {
+            background: rgba(147, 51, 234, 0.25) !important;
+            border: 1px solid rgba(168, 85, 247, 0.35) !important;
+            border-radius: 5px !important;
+            width: 19px !important;
+            height: 19px !important;
+            display: flex !important;
+            align-items: center !important;
+            justify-content: center !important;
+            color: #d8b4fe !important;
+            font-size: 12px !important;
+            cursor: pointer !important;
+            transition: all 0.15s ease !important;
+        }
+        .aether-sb-new-tab-btn:hover {
+            background: rgba(168, 85, 247, 0.5) !important;
+            color: #ffffff !important;
+            box-shadow: 0 0 8px rgba(168, 85, 247, 0.5) !important;
+            transform: scale(1.08) !important;
+        }
+
+        .aether-sb-tabs-list {
+            flex: 1 !important;
+            overflow-y: auto !important;
+            overflow-x: hidden !important;
+            display: flex !important;
+            flex-direction: column !important;
+            gap: 4px !important;
+            padding: 2px !important;
+        }
+        .aether-sb-tabs-list::-webkit-scrollbar { width: 3px !important; }
+        .aether-sb-tabs-list::-webkit-scrollbar-thumb { background: rgba(168, 85, 247, 0.3) !important; border-radius: 3px !important; }
+
+        .aether-sb-tab-item {
+            display: flex !important;
+            align-items: center !important;
+            gap: 7px !important;
+            padding: 6px 8px !important;
+            border-radius: 7px !important;
+            font-size: 12px !important;
+            color: #cbd5e1 !important;
+            cursor: pointer !important;
+            border: 1px solid transparent !important;
+            transition: all 0.15s ease !important;
+        }
+        .aether-sb-tab-item:hover {
+            background: rgba(255, 255, 255, 0.05) !important;
+            color: #ffffff !important;
+        }
+        .aether-sb-tab-item.active {
+            background: linear-gradient(135deg, rgba(147, 51, 234, 0.35), rgba(124, 58, 237, 0.2)) !important;
+            border-color: rgba(192, 132, 252, 0.55) !important;
+            color: #ffffff !important;
+            font-weight: 500 !important;
+            box-shadow: 0 3px 12px rgba(0, 0, 0, 0.3), 0 0 8px rgba(168, 85, 247, 0.2) !important;
+        }
+        .aether-sb-tab-badge {
+            width: 15px !important;
+            height: 15px !important;
+            flex-shrink: 0 !important;
+            display: flex !important;
+            align-items: center !important;
+            justify-content: center !important;
+            font-size: 11px !important;
+        }
+        .aether-sb-tab-title {
+            flex: 1 !important;
+            white-space: nowrap !important;
+            overflow: hidden !important;
+            text-overflow: ellipsis !important;
+        }
+        .aether-sb-tab-close {
+            opacity: 0 !important;
+            font-size: 11px !important;
+            color: #94a3b8 !important;
+            padding: 1px 4px !important;
+            border-radius: 3px !important;
+            transition: all 0.12s !important;
+        }
+        .aether-sb-tab-item:hover .aether-sb-tab-close {
+            opacity: 0.75 !important;
+        }
+        .aether-sb-tab-close:hover {
+            opacity: 1 !important;
+            color: #fca5a5 !important;
+            background: rgba(239, 68, 68, 0.25) !important;
+        }
+
+        /* Bottom Utilities Dock */
+        .aether-sb-dock {
+            margin-top: auto !important;
+            padding-top: 8px !important;
+            border-top: 1px solid rgba(255, 255, 255, 0.08) !important;
+            display: flex !important;
+            align-items: center !important;
+            justify-content: space-around !important;
+        }
+        .aether-sb-dock-btn {
+            width: 30px !important;
+            height: 30px !important;
+            border-radius: 7px !important;
+            background: rgba(255, 255, 255, 0.04) !important;
+            border: 1px solid rgba(255, 255, 255, 0.06) !important;
+            display: flex !important;
+            align-items: center !important;
+            justify-content: center !important;
+            color: #94a3b8 !important;
+            cursor: pointer !important;
+            transition: all 0.15s ease !important;
+        }
+        .aether-sb-dock-btn:hover {
+            background: rgba(168, 85, 247, 0.25) !important;
+            color: #d8b4fe !important;
+            border-color: rgba(168, 85, 247, 0.45) !important;
+            box-shadow: 0 0 10px rgba(168, 85, 247, 0.3) !important;
+            transform: translateY(-1px) !important;
+        }
+    `;
+
+    function injectStyle() {
+        if (document.getElementById('aether-arc-style')) return;
+        const style = document.createElement('style');
+        style.id = 'aether-arc-style';
+        style.textContent = SIDEBAR_CSS;
+        (document.head || document.documentElement).appendChild(style);
+    }
+
+    function getTabIcon(url, title) {
+        const u = (url || '').toLowerCase();
+        if (u.includes('youtube.com')) return '<span style="color:#ef4444; font-size:12px;">▶</span>';
+        if (u.includes('vk.com')) return '<span style="color:#0077ff; font-weight:bold; font-size:10px;">VK</span>';
+        if (u.includes('telegram.org')) return '<span style="color:#38bdf8; font-size:11px;">✈</span>';
+        if (u.includes('github.com')) return '<span style="color:#f8fafc; font-size:11px;">🐙</span>';
+        if (u.includes('start.html')) return '<span style="color:#c084fc; font-size:11px;">🌌</span>';
+        return '<span style="color:#94a3b8; font-size:11px;">🌐</span>';
+    }
+
+    // 4. ПОСТРОЕНИЕ САЙДБАРА
+    function renderSidebar() {
+        injectStyle();
+
+        let sidebar = document.getElementById('aether-arc-sidebar');
+        if (!sidebar) {
+            sidebar = document.createElement('div');
+            sidebar.id = 'aether-arc-sidebar';
+            document.documentElement.appendChild(sidebar);
+        }
+
+        let expandPill = document.getElementById('aether-expand-pill');
+        if (!expandPill) {
+            expandPill = document.createElement('div');
+            expandPill.id = 'aether-expand-pill';
+            expandPill.title = 'Развернуть сайдбар Aether (Ctrl + B)';
+            expandPill.innerHTML = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M9 18l6-6-6-6"/></svg>';
+            expandPill.onclick = () => toggleSidebar(false);
+            document.documentElement.appendChild(expandPill);
+        }
+
+        const state = getTabsState();
+        if (state.sidebarCollapsed) {
+            sidebar.classList.add('collapsed');
+            document.documentElement.classList.add('aether-collapsed');
+        } else {
+            sidebar.classList.remove('collapsed');
+            document.documentElement.classList.remove('aether-collapsed');
+        }
+
+        // Внутренняя разметка
+        safeSetHTML(sidebar, `
+            <div class="aether-sb-header">
+                <div class="aether-sb-brand">
+                    <span class="aether-sb-brand-icon">🌌</span>
+                    <span>AETHER</span>
+                </div>
+                <div class="aether-sb-btn-box">
+                    <button id="aether-sb-toggle-btn" class="aether-sb-tool-btn" title="Свернуть сайдбар (Ctrl + B)">
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M15 18l-6-6 6-6"/></svg>
+                    </button>
+                </div>
+            </div>
+
+            <div class="aether-sb-nav-row">
+                <button id="aether-sb-back" class="aether-sb-nav-btn" title="Назад (Alt + ←)">
+                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+                </button>
+                <button id="aether-sb-forward" class="aether-sb-nav-btn" title="Вперед (Alt + →)">
+                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+                </button>
+                <button id="aether-sb-reload" class="aether-sb-nav-btn" title="Обновить (F5)">
+                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg>
+                </button>
+                <div class="aether-sb-omnibox-wrap">
+                    <span class="aether-sb-omnibox-icon">🔍</span>
+                    <input id="aether-sb-omnibox" class="aether-sb-omnibox-input" type="text" placeholder="Поиск или URL..." autocomplete="off" />
+                </div>
+            </div>
+
+            <div class="aether-sb-favorites">
+                <div class="aether-sb-fav-tile" title="YouTube" id="fav-yt">
+                    <svg viewBox="0 0 24 24" width="18" height="18" fill="#ff0000"><path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/></svg>
+                    <div id="dot-yt" class="aether-sb-active-dot"></div>
+                </div>
+                <div class="aether-sb-fav-tile" title="ВКонтакте" id="fav-vk">
+                    <svg viewBox="0 0 24 24" width="18" height="18" fill="#0077ff"><path d="M15.684 0H8.316C2.992 0 0 2.992 0 8.316v7.368C0 21.008 2.992 24 8.316 24h7.368C21.008 24 24 21.008 24 15.684V8.316C24 2.992 21.008 0 15.684 0zm3.692 17.123h-1.744c-.66 0-.862-.525-2.05-1.714-1.036-1.01-1.496-1.144-1.75-1.144-.356 0-.457.102-.457.593v1.642c0 .423-.135.686-1.253.686-1.846 0-3.896-1.12-5.336-3.201-2.17-3.074-2.778-5.386-2.778-5.86 0-.254.102-.491.593-.491h1.745c.44 0 .61.203.78.677.847 2.49 2.27 4.675 2.862 4.675.22 0 .322-.102.322-.66V11.23c-.068-1.185-.695-1.287-.695-1.71 0-.203.17-.406.44-.406h2.744c.373 0 .508.186.508.626v3.354c0 .355.153.474.254.474.22 0 .407-.119.814-.525 1.27-1.423 2.185-3.642 2.185-3.642.119-.254.339-.491.78-.491h1.744c.525 0 .644.27.525.643-.22.983-2.287 3.913-2.388 4.082-.204.322-.288.474 0 .864.203.27 1.05 1.016 1.592 1.643.999 1.152 1.762 2.117 1.965 2.778.084.271-.102.66-.542.66z"/></svg>
+                    <div id="dot-vk" class="aether-sb-active-dot"></div>
+                </div>
+                <div class="aether-sb-fav-tile" title="Telegram" id="fav-tg">
+                    <svg viewBox="0 0 24 24" width="18" height="18" fill="#29b6f6"><path d="M12 0C5.373 0 0 5.373 0 12s5.373 12 12 12 12-5.373 12-12S18.627 0 12 0zm5.894 8.221l-1.97 9.28c-.145.658-.537.818-1.084.508l-3-2.21-1.446 1.394c-.16.16-.295.295-.605.295l.213-3.053 5.56-5.023c.242-.213-.054-.333-.373-.121l-6.871 4.326-2.962-.924c-.643-.204-.657-.643.136-.953l11.57-4.458c.538-.196 1.006.128.832.935z"/></svg>
+                    <div id="dot-tg" class="aether-sb-active-dot"></div>
+                </div>
+                <div class="aether-sb-fav-tile" title="GitHub" id="fav-gh">
+                    <svg viewBox="0 0 24 24" width="18" height="18" fill="#ffffff"><path fill-rule="evenodd" clip-rule="evenodd" d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.53 1.032 1.53 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z"/></svg>
+                    <div id="dot-gh" class="aether-sb-active-dot"></div>
+                </div>
+            </div>
+
+            <div class="aether-sb-tabs-header">
+                <span id="aether-sb-tabs-counter">Вкладки (${state.tabs.length})</span>
+                <button id="aether-sb-new-tab" class="aether-sb-new-tab-btn" title="Новая вкладка (Ctrl + T)">+</button>
+            </div>
+
+            <div id="aether-sb-tabs-list" class="aether-sb-tabs-list"></div>
+
+            <div class="aether-sb-dock">
+                <button id="aether-sb-audio" class="aether-sb-dock-btn" title="Только аудио (Ctrl + M) — экономия ресурсов">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M3 18v-6a9 9 0 0 1 18 0v6"/><path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3zM3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z"/></svg>
+                </button>
+                <button id="aether-sb-pip" class="aether-sb-dock-btn" title="Картинка в картинке / PiP (Ctrl + P)">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><rect x="2" y="3" width="20" height="14" rx="2"/><rect x="12" y="9" width="8" height="6" rx="1"/></svg>
+                </button>
+                <button id="aether-sb-download" class="aether-sb-dock-btn" title="Скачать видео через yt-dlp (Ctrl + D)">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                </button>
+                <button id="aether-sb-home" class="aether-sb-dock-btn" title="Стартовая страница Aether">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+                </button>
+            </div>
+        `);
+
+        // Заполняем вкладки
+        const tabsContainer = document.getElementById('aether-sb-tabs-list');
+        let hasYt = false, hasVk = false, hasTg = false, hasGh = false;
+
+        state.tabs.forEach(tab => {
+            const u = (tab.url || '').toLowerCase();
+            if (u.includes('youtube.com')) hasYt = true;
+            if (u.includes('vk.com')) hasVk = true;
+            if (u.includes('telegram.org')) hasTg = true;
+            if (u.includes('github.com')) hasGh = true;
+
+            const item = document.createElement('div');
+            item.className = 'aether-sb-tab-item' + (tab.id === state.activeTabId ? ' active' : '');
+
+            const badge = document.createElement('div');
+            badge.className = 'aether-sb-tab-badge';
+            badge.innerHTML = getTabIcon(tab.url, tab.title);
+
+            const title = document.createElement('div');
+            title.className = 'aether-sb-tab-title';
+            title.textContent = tab.title || 'Новая вкладка';
+
+            const closeBtn = document.createElement('div');
+            closeBtn.className = 'aether-sb-tab-close';
+            closeBtn.textContent = '✕';
+            closeBtn.onclick = (e) => {
+                e.stopPropagation();
+                closeTab(tab.id);
+            };
+
+            item.onclick = () => {
+                if (tab.id !== state.activeTabId) {
+                    switchTab(tab.id);
+                }
+            };
+
+            item.appendChild(badge);
+            item.appendChild(title);
+            item.appendChild(closeBtn);
+            tabsContainer.appendChild(item);
+        });
+
+        // Индикаторы активных избранных
+        if (document.getElementById('dot-yt')) document.getElementById('dot-yt').style.display = hasYt ? 'block' : 'none';
+        if (document.getElementById('dot-vk')) document.getElementById('dot-vk').style.display = hasVk ? 'block' : 'none';
+        if (document.getElementById('dot-tg')) document.getElementById('dot-tg').style.display = hasTg ? 'block' : 'none';
+        if (document.getElementById('dot-gh')) document.getElementById('dot-gh').style.display = hasGh ? 'block' : 'none';
+
+        // Omnibox значение
+        const omnibox = document.getElementById('aether-sb-omnibox');
+        if (omnibox) {
+            const isStart = window.location.href.includes("start.html");
+            omnibox.value = isStart ? "" : window.location.href;
+            omnibox.onkeydown = (e) => {
+                if (e.key === 'Enter') {
+                    handleNavigate(omnibox.value.trim());
+                }
+            };
+        }
+
+        // События кнопок навигации
+        document.getElementById('aether-sb-back').onclick = () => window.history.back();
+        document.getElementById('aether-sb-forward').onclick = () => window.history.forward();
+        document.getElementById('aether-sb-reload').onclick = () => window.location.reload();
+        document.getElementById('aether-sb-toggle-btn').onclick = () => toggleSidebar(true);
+        document.getElementById('aether-sb-new-tab').onclick = () => createNewTab();
+        document.getElementById('aether-sb-home').onclick = () => navigateToUrl(getStartPageUrl());
+
+        // Быстрые сервисы
+        document.getElementById('fav-yt').onclick = () => openService('https://www.youtube.com');
+        document.getElementById('fav-vk').onclick = () => openService('https://vk.com');
+        document.getElementById('fav-tg').onclick = () => openService('https://web.telegram.org');
+        document.getElementById('fav-gh').onclick = () => openService('https://github.com');
+
+        // Медиа-инструменты
+        document.getElementById('aether-sb-audio').onclick = () => toggleAudioMode();
+        document.getElementById('aether-sb-pip').onclick = () => togglePiP();
+        document.getElementById('aether-sb-download').onclick = () => copyYtDlp();
+    }
+
+    // 5. ДЕЙСТВИЯ С ВКЛАДКАМИ И НАВИГАЦИЕЙ
+    function toggleSidebar(collapsed) {
+        const state = getTabsState();
+        state.sidebarCollapsed = (typeof collapsed === 'boolean') ? collapsed : !state.sidebarCollapsed;
+        saveTabsState(state);
+        renderSidebar();
+    }
+
+    function createNewTab(url) {
+        const state = getTabsState();
+        const targetUrl = url || getStartPageUrl();
+        const newId = state.nextTabId;
+        state.nextTabId++;
+        const title = targetUrl.includes("start.html") ? "Старт" : "Новая вкладка";
+        state.tabs.push({ id: newId, title, url: targetUrl });
+        state.activeTabId = newId;
+        saveTabsState(state);
+        window.location.href = targetUrl;
+    }
+
+    function switchTab(id) {
+        const state = getTabsState();
+        const tab = state.tabs.find(t => t.id === id);
+        if (tab && tab.url) {
+            state.activeTabId = id;
+            saveTabsState(state);
+            window.location.href = tab.url;
+        }
+    }
+
+    function closeTab(id) {
+        const state = getTabsState();
+        const idx = state.tabs.findIndex(t => t.id === id);
+        if (idx !== -1) {
+            if (state.tabs.length <= 1) {
+                // Если осталась одна вкладка, сбрасываем ее на Старт
+                state.tabs[0].url = getStartPageUrl();
+                state.tabs[0].title = "Старт";
+                saveTabsState(state);
+                window.location.href = getStartPageUrl();
+                return;
+            }
+
+            const wasActive = state.activeTabId === id;
+            state.tabs.splice(idx, 1);
+
+            if (wasActive) {
+                const nextTab = state.tabs[Math.max(0, idx - 1)] || state.tabs[0];
+                state.activeTabId = nextTab.id;
+                saveTabsState(state);
+                window.location.href = nextTab.url;
+            } else {
+                saveTabsState(state);
+                renderSidebar();
+            }
+        }
+    }
+
+    function openService(url) {
+        const state = getTabsState();
+        const domain = url.replace("https://", "").replace("http://", "").replace("www.", "").split('/')[0];
+        const existing = state.tabs.find(t => t.url && t.url.includes(domain));
+        if (existing) {
+            switchTab(existing.id);
+        } else {
+            // Если на странице старт, переходим в текущей, иначе создаем новую
+            if (window.location.href.includes("start.html")) {
+                navigateToUrl(url);
+            } else {
+                createNewTab(url);
+            }
+        }
+    }
+
+    function navigateToUrl(url) {
+        const state = getTabsState();
+        let tab = state.tabs.find(t => t.id === state.activeTabId);
+        if (tab) {
+            tab.url = url;
+            tab.title = url.includes("start.html") ? "Старт" : "Загрузка...";
+        }
+        saveTabsState(state);
+        window.location.href = url;
+    }
+
+    function handleNavigate(input) {
+        if (!input) return;
+        let targetUrl = "";
+        const lower = input.toLowerCase();
+
+        if (lower.startsWith("yt:") || lower.startsWith("ютуб:")) {
+            const q = input.replace(/^(yt:|ютуб:)/i, "").trim();
+            targetUrl = "https://www.youtube.com/results?search_query=" + encodeURIComponent(q);
+        } else if (lower.startsWith("vk:") || lower.startsWith("вк:")) {
+            const q = input.replace(/^(vk:|вк:)/i, "").trim();
+            targetUrl = "https://vk.com/search?c%5Bsection%5D=auto&c%5Bq%5D=" + encodeURIComponent(q);
+        } else if (lower.startsWith("gh:")) {
+            const q = input.replace(/^gh:/i, "").trim();
+            targetUrl = "https://github.com/search?q=" + encodeURIComponent(q);
+        } else if (input.startsWith("http://") || input.startsWith("https://")) {
+            targetUrl = input;
+        } else if (input.includes(".") && !input.includes(" ") && !input.endsWith(".")) {
+            targetUrl = "https://" + input;
+        } else {
+            targetUrl = "https://www.google.com/search?q=" + encodeURIComponent(input);
+        }
+
+        navigateToUrl(targetUrl);
+    }
+
+    // 6. МЕДИА ФУНКЦИИ
+    function toggleAudioMode() {
+        const video = document.querySelector('video');
+        if (video) {
+            const isAudioOnly = video.style.opacity === '0.001';
+            video.style.opacity = isAudioOnly ? '1' : '0.001';
+            video.style.transform = isAudioOnly ? 'scale(1)' : 'scale(0.01)';
+        }
+    }
+
+    function togglePiP() {
+        const video = document.querySelector('video');
+        if (video) {
+            if (document.pictureInPictureElement) {
+                document.exitPictureInPicture().catch(() => {});
+            } else if (document.pictureInPictureEnabled) {
+                video.requestPictureInPicture().catch(() => {});
+            }
+        }
+    }
+
+    function copyYtDlp() {
+        const url = window.location.href;
+        const cmd = `yt-dlp -f "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best" "${url}"`;
+        try {
+            navigator.clipboard.writeText(cmd);
+            alert("Команда для скачивания скопирована в буфер обмена!\n\n" + cmd);
+        } catch (_) {
+            prompt("Скопируйте команду:", cmd);
+        }
+    }
+
+    // 7. YOUTUBE АВТО-ПРОПУСК РЕКЛАМЫ
     if (location.hostname.includes("youtube.com")) {
         setInterval(() => {
             try {
@@ -846,5 +1118,63 @@ pub const CONTENT_SCRIPT: &str = r###"
             } catch (_) {}
         }, 300);
     }
+
+    // 8. ГОРЯЧИЕ КЛАВИШИ БРАУЗЕРА
+    window.addEventListener('keydown', (e) => {
+        const ctrl = e.ctrlKey || e.metaKey;
+        if (ctrl && (e.key === 't' || e.key === 'T' || e.key === 'е' || e.key === 'Е')) {
+            e.preventDefault();
+            createNewTab();
+        } else if (ctrl && (e.key === 'w' || e.key === 'W' || e.key === 'ц' || e.key === 'Ц')) {
+            e.preventDefault();
+            const state = getTabsState();
+            closeTab(state.activeTabId);
+        } else if (ctrl && (e.key === 'b' || e.key === 'B' || e.key === 'и' || e.key === 'И')) {
+            e.preventDefault();
+            toggleSidebar();
+        } else if (ctrl && (e.key === 'l' || e.key === 'L' || e.key === 'д' || e.key === 'Д') || e.key === 'F6') {
+            e.preventDefault();
+            const omnibox = document.getElementById('aether-sb-omnibox');
+            if (omnibox) {
+                toggleSidebar(false);
+                omnibox.focus();
+                omnibox.select();
+            }
+        } else if (ctrl && (e.key === 'm' || e.key === 'M' || e.key === 'ь' || e.key === 'Ь')) {
+            e.preventDefault();
+            toggleAudioMode();
+        } else if (ctrl && (e.key === 'd' || e.key === 'D' || e.key === 'в' || e.key === 'В')) {
+            e.preventDefault();
+            copyYtDlp();
+        } else if (ctrl && (e.key === 'p' || e.key === 'P' || e.key === 'з' || e.key === 'З')) {
+            e.preventDefault();
+            togglePiP();
+        }
+    });
+
+    // 9. СЛЕЖЕНИЕ ЗА ИЗМЕНЕНИЕМ ЗАГОЛОВКА
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', renderSidebar);
+    } else {
+        renderSidebar();
+    }
+    window.addEventListener('load', renderSidebar);
+    window.addEventListener('yt-navigate-finish', () => {
+        updateCurrentTabInfo();
+        renderSidebar();
+    });
+    window.addEventListener('popstate', () => {
+        updateCurrentTabInfo();
+        renderSidebar();
+    });
+
+    let prevTitle = "";
+    setInterval(() => {
+        if (document.title !== prevTitle) {
+            prevTitle = document.title;
+            updateCurrentTabInfo();
+            renderSidebar();
+        }
+    }, 500);
 })();
 "###;
