@@ -14,6 +14,7 @@ use tao::platform::windows::WindowExtWindows;
 use wry::{http::Request, WebContext, WebViewBuilder};
 
 const APP_NAME: &str = "Aether";
+const START_URL: &str = "aether://localhost/start.html";
 
 #[derive(Debug, Clone)]
 enum UserEvent {
@@ -42,7 +43,7 @@ fn run_app() -> Result<(), Box<dyn std::error::Error>> {
 
     // 1. Создаем нативное окно через Tao с глубокой тёмной темой
     let window = WindowBuilder::new()
-        .with_title(format!("{} v0.6.2 — Легкий медиа-браузер", APP_NAME))
+        .with_title(format!("{} v0.6.3 — Легкий медиа-браузер", APP_NAME))
         .with_inner_size(tao::dpi::LogicalSize::new(1440.0, 900.0))
         .with_theme(Some(Theme::Dark))
         .build(&event_loop)?;
@@ -90,21 +91,24 @@ fn run_app() -> Result<(), Box<dyn std::error::Error>> {
         "[]".to_string()
     };
 
-    // 2.2 Подготавливаем кастомную фиолетовую стартовую страницу Aether
-    let start_html_path = profile_dir.join("start.html");
-    std::fs::write(&start_html_path, scripts::START_PAGE_HTML).ok();
-    let start_url = format!("file:///{}", start_html_path.to_string_lossy().replace('\\', "/"));
-
     let mut web_context = WebContext::new(Some(profile_dir));
-    let core_script = scripts::get_core_script(&start_url, &saved_cards);
+    let core_script = scripts::get_core_script(START_URL, &saved_cards);
 
-    // 3. Инициализируем рендерер Wry с переданным контекстом и IPC-обработчиком
+    // 3. Инициализируем рендерер Wry с кастомным протоколом aether:// и IPC
     let ipc_proxy = proxy.clone();
     let cards_file_ipc = cards_json_path.clone();
 
     let webview = WebViewBuilder::with_web_context(&mut web_context)
         .with_clipboard(true)
         .with_devtools(true)
+        .with_custom_protocol("aether".into(), move |_id, _request| {
+            let body = scripts::START_PAGE_HTML.as_bytes().to_vec();
+            wry::http::Response::builder()
+                .header(wry::http::header::CONTENT_TYPE, "text/html; charset=utf-8")
+                .header("Access-Control-Allow-Origin", "*")
+                .body(std::borrow::Cow::Owned(body))
+                .unwrap()
+        })
         .with_initialization_script(&core_script)
         .with_ipc_handler(move |req: Request<String>| {
             let body = req.body().trim();
@@ -117,19 +121,19 @@ fn run_app() -> Result<(), Box<dyn std::error::Error>> {
                 ipc_proxy.send_event(UserEvent::SaveCards(json.to_string())).ok();
             }
         })
-        .with_url(&start_url)
+        .with_url(START_URL)
         .build(&window)?;
 
     // 4. Главный цикл событий
-    let start_url_clone = start_url.clone();
     event_loop.run(move |event, _, control_flow| {
         *control_flow = ControlFlow::Wait;
 
         match event {
             Event::NewEvents(StartCause::Init) => {
-                println!("[Aether v0.6.2] Запущен успешно в стиле Arc!");
-                println!("  Стартовая страница: {}", start_url_clone);
+                println!("[Aether v0.6.3] Запущен успешно в стиле Arc!");
+                println!("  Стартовая страница: {}", START_URL);
                 println!("  Ctrl+B:      свернуть/развернуть боковой сайдбар");
+                println!("  Ctrl+H:      перейти домой");
                 println!("  Ctrl+T:      новая вкладка");
                 println!("  Ctrl+W:      закрыть вкладку");
                 println!("  F6 / Ctrl+L: поиск / омнибокс");
@@ -143,10 +147,15 @@ fn run_app() -> Result<(), Box<dyn std::error::Error>> {
             Event::UserEvent(user_event) => {
                 match user_event {
                     UserEvent::GoHome => {
-                        webview.load_url(&start_url_clone).ok();
+                        webview.load_url(START_URL).ok();
                     }
                     UserEvent::Navigate(target_url) => {
-                        webview.load_url(&target_url).ok();
+                        let valid_url = if target_url.starts_with("http://") || target_url.starts_with("https://") || target_url.starts_with("aether://") {
+                            target_url
+                        } else {
+                            format!("https://{}", target_url)
+                        };
+                        webview.load_url(&valid_url).ok();
                     }
                     UserEvent::SaveCards(_) => {}
                 }
@@ -157,7 +166,6 @@ fn run_app() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn main() {
-    // Устанавливаем перехватчик паник для записи логов и показа нативного окна ошибки
     std::panic::set_hook(Box::new(|info| {
         let msg = format!("Критическая ошибка Aether Browser:\n{}\n", info);
         eprintln!("{}", msg);
