@@ -11,7 +11,7 @@ use tao::{
 };
 #[cfg(target_os = "windows")]
 use tao::platform::windows::WindowExtWindows;
-use wry::{http::Request, NewWindowResponse, WebContext, WebViewBuilder};
+use wry::{http::Request, WebContext, WebViewBuilder};
 
 const APP_NAME: &str = "Aether";
 const START_URL: &str = "http://aether.localhost/";
@@ -141,10 +141,10 @@ fn run_app() -> Result<(), Box<dyn std::error::Error>> {
                 .unwrap()
         })
         .with_initialization_script(&core_script)
-        .with_new_window_req_handler(move |url, _features| {
+        .with_new_window_req_handler(move |url| {
             log_desktop(&format!("with_new_window_req_handler: перехвачен запрос нового окна: {}", url));
             let _ = new_window_proxy.send_event(UserEvent::OpenNewTab(url));
-            NewWindowResponse::Deny
+            false
         })
         .with_ipc_handler(move |req: Request<String>| {
             let body = req.body().trim();
