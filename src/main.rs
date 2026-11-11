@@ -1,3 +1,5 @@
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 mod scripts;
 
 use directories::ProjectDirs;
@@ -15,9 +17,9 @@ const DEFAULT_HOME_URL: &str = "https://www.google.com";
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let event_loop = EventLoop::new();
 
-    // 1. Создаем нативное окно через Tao (чистый кроссплатформенный интерфейс)
+    // 1. Создаем нативное окно через Tao
     let window = WindowBuilder::new()
-        .with_title(format!("{} v0.5.0 — Легкий медиа-браузер", APP_NAME))
+        .with_title(format!("{} v0.5.1 — Легкий медиа-браузер", APP_NAME))
         .with_inner_size(tao::dpi::LogicalSize::new(1440.0, 900.0))
         .build(&event_loop)?;
 
@@ -47,8 +49,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         match event {
             Event::NewEvents(StartCause::Init) => {
-                println!("[Aether v0.5.0] Запущен успешно!");
-                println!("  F6 / Ctrl+L: поиск в Google / ввод адреса");
+                println!("[Aether v0.5.1] Запущен успешно!");
+                println!("  F6 / Ctrl+L: поиск в Google / ввод адреса (HUD Omnibox)");
                 println!("  Ctrl+Space:  пауза/плей (YouTube / ВК)");
                 println!("  Ctrl+P:      режим Picture-in-Picture");
                 println!("  Ctrl+M:      режим 'Только аудио'");
