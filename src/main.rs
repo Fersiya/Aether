@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use tao::{
     event::{Event, StartCause, WindowEvent},
     event_loop::{ControlFlow, EventLoopBuilder},
-    window::{Theme, WindowBuilder},
+    window::{Icon, Theme, WindowBuilder},
 };
 #[cfg(target_os = "windows")]
 use tao::platform::windows::WindowExtWindows;
@@ -15,6 +15,7 @@ use wry::{http::Request, WebContext, WebViewBuilder};
 
 const APP_NAME: &str = "Aether";
 const START_URL: &str = "http://aether.localhost/";
+const ICON_RGBA: &[u8] = include_bytes!("../assets/icon_256.rgba");
 
 #[derive(Debug, Clone)]
 enum UserEvent {
@@ -60,14 +61,17 @@ fn show_error_dialog(title: &str, message: &str) {
 }
 
 fn run_app() -> Result<(), Box<dyn std::error::Error>> {
-    log_desktop("=== Aether Browser v0.6.4: Запуск приложения ===");
+    log_desktop("=== Aether Browser v0.6.5: Запуск приложения ===");
 
     let event_loop = EventLoopBuilder::<UserEvent>::with_user_event().build();
     let proxy = event_loop.create_proxy();
 
-    // 1. Создаем нативное окно через Tao с глубокой тёмной темой
+    // 1. Создаем нативное окно через Tao с глубокой тёмной темой и качественной иконкой
+    let window_icon = Icon::from_rgba(ICON_RGBA.to_vec(), 256, 256).ok();
+
     let window = WindowBuilder::new()
-        .with_title(format!("{} v0.6.4 — Легкий медиа-браузер", APP_NAME))
+        .with_title(format!("{} v0.6.5 — Легкий медиа-браузер", APP_NAME))
+        .with_window_icon(window_icon)
         .with_inner_size(tao::dpi::LogicalSize::new(1440.0, 900.0))
         .with_theme(Some(Theme::Dark))
         .build(&event_loop)?;
@@ -137,15 +141,24 @@ fn run_app() -> Result<(), Box<dyn std::error::Error>> {
         .with_ipc_handler(move |req: Request<String>| {
             let body = req.body().trim();
             if body == "go_home" {
-                log_desktop("IPC handler received: go_home");
+                log_desktop("IPC handler: go_home");
                 ipc_proxy.send_event(UserEvent::GoHome).ok();
             } else if let Some(url) = body.strip_prefix("navigate:") {
-                log_desktop(&format!("IPC handler received: navigate to {}", url));
+                log_desktop(&format!("IPC handler: navigate to {}", url));
                 ipc_proxy.send_event(UserEvent::Navigate(url.to_string())).ok();
             } else if let Some(json) = body.strip_prefix("save_cards:") {
-                log_desktop("IPC handler received: save_cards");
+                log_desktop("IPC handler: save_cards");
                 let _ = std::fs::write(&cards_file_ipc, json);
                 ipc_proxy.send_event(UserEvent::SaveCards(json.to_string())).ok();
+            } else if body == "open_log_in_explorer" {
+                let log_path = get_desktop_log_path();
+                log_desktop(&format!("IPC handler: открытие проводника с выделением файла {:?}", log_path));
+                #[cfg(target_os = "windows")]
+                {
+                    let _ = std::process::Command::new("explorer")
+                        .arg(format!("/select,{}", log_path.display()))
+                        .spawn();
+                }
             } else if let Some(log_msg) = body.strip_prefix("log:") {
                 log_desktop(&format!("[JS] {}", log_msg));
             }
@@ -161,7 +174,7 @@ fn run_app() -> Result<(), Box<dyn std::error::Error>> {
 
         match event {
             Event::NewEvents(StartCause::Init) => {
-                log_desktop("[Aether v0.6.4] Готов к работе!");
+                log_desktop("[Aether v0.6.5] Готов к работе!");
             }
             Event::WindowEvent {
                 event: WindowEvent::CloseRequested,

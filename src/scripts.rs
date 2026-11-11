@@ -1,10 +1,10 @@
-//! Встроенный рантайм Aether Browser v0.6.4 (Arc / Zen Style):
+//! Встроенный рантайм Aether Browser v0.6.5 (Arc / Zen Style):
 //! - Чистый веб-контент: нулевые модификации html/body/элементов сайтов — YouTube и VK работают на 100% без сдвигов и багов
-//! - Плавающий авто-скрывающийся сайдбар Arc Style: открывается при наведении на левый край экрана, клике на значок или Ctrl+B
-//! - Отдельное окно "Настройки" с полной историей поиска и переходов, очисткой и переключением режимов
-//! - Меню ПКМ по видео: скачивание через yt-dlp, PiP, режим Только аудио, копирование ссылки
-//! - Кнопка Домика гарантированно ведет на http://aether.localhost/ через Rust IPC
-//! - Автоматический сбор логов в aether_debug.log на Рабочем столе для полной диагностики
+//! - Плавающий авто-скрывающийся сайдбар Arc Style
+//! - Новая вкладка "Пароли" в Настройках: сохранение логинов и паролей с просмотром 👁️, копированием 📋 и удалением
+//! - Кнопка "Показать файл на Рабочем столе" в Настройках: мгновенно открывает Проводник и выделяет aether_debug.log
+//! - Исправлен баг появления контекстного меню на белом экране при загрузке сайтов
+//! - Новый векторный логотип Aether и качественная иконка приложения
 
 pub const START_PAGE_HTML: &str = r###"<!DOCTYPE html>
 <html lang="ru">
@@ -81,12 +81,13 @@ pub const START_PAGE_HTML: &str = r###"<!DOCTYPE html>
         #aether-logo-wrap {
             display: flex;
             align-items: center;
-            gap: 12px;
+            gap: 14px;
             margin-bottom: 30px;
         }
-        #aether-logo-icon {
-            font-size: 34px;
-            filter: drop-shadow(0 0 15px rgba(168, 85, 247, 0.7));
+        .aether-emblem-svg {
+            width: 44px;
+            height: 44px;
+            filter: drop-shadow(0 0 16px rgba(168, 85, 247, 0.75));
         }
         #aether-logo-text {
             font-size: 28px;
@@ -100,7 +101,7 @@ pub const START_PAGE_HTML: &str = r###"<!DOCTYPE html>
         /* Поисковая строка */
         #aether-search-container {
             width: 100%;
-            max-width: 640px;
+            max-width: 620px;
             position: relative;
             margin-bottom: 36px;
         }
@@ -111,7 +112,7 @@ pub const START_PAGE_HTML: &str = r###"<!DOCTYPE html>
             -webkit-backdrop-filter: blur(20px);
             border: 1.5px solid rgba(168, 85, 247, 0.45);
             border-radius: 9999px;
-            padding: 8px 12px 8px 22px;
+            padding: 7px 12px 7px 20px;
             display: flex;
             align-items: center;
             gap: 12px;
@@ -128,7 +129,7 @@ pub const START_PAGE_HTML: &str = r###"<!DOCTYPE html>
             background: transparent;
             border: none;
             outline: none;
-            font-size: 15.5px;
+            font-size: 15px;
             color: #ffffff;
         }
         #aether-search-input::placeholder { color: #94a3b8; }
@@ -136,8 +137,8 @@ pub const START_PAGE_HTML: &str = r###"<!DOCTYPE html>
             background: linear-gradient(135deg, #9333ea, #7c3aed);
             border: none;
             border-radius: 50%;
-            width: 38px;
-            height: 38px;
+            width: 36px;
+            height: 36px;
             display: flex;
             align-items: center;
             justify-content: center;
@@ -150,7 +151,6 @@ pub const START_PAGE_HTML: &str = r###"<!DOCTYPE html>
             box-shadow: 0 0 16px rgba(168, 85, 247, 0.6);
         }
 
-        /* Выпадающий список популярных интернет-сервисов и быстрого поиска */
         #aether-ac-dropdown {
             position: absolute;
             top: calc(100% + 8px);
@@ -178,14 +178,11 @@ pub const START_PAGE_HTML: &str = r###"<!DOCTYPE html>
             transition: background 0.15s;
         }
         .aether-ac-item:last-child { border-bottom: none; }
-        .aether-ac-item:hover, .aether-ac-item.selected {
-            background: rgba(147, 51, 234, 0.28);
-            color: #ffffff;
-        }
+        .aether-ac-item:hover { background: rgba(147, 51, 234, 0.28); color: #ffffff; }
         .aether-ac-icon { font-size: 16px; color: #c084fc; width: 22px; text-align: center; }
         .aether-ac-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
 
-        /* Быстрые сервисы: гибкая центровка. Кнопка + всегда слева, всё по центру */
+        /* Быстрые сервисы: гибкая центровка */
         #aether-grid {
             display: flex;
             justify-content: center;
@@ -387,7 +384,7 @@ pub const START_PAGE_HTML: &str = r###"<!DOCTYPE html>
             cursor: pointer;
         }
 
-        /* Окно НАСТРОЕК с Историей */
+        /* Окно НАСТРОЕК */
         #aether-settings-modal {
             position: fixed;
             top: 0; left: 0; right: 0; bottom: 0;
@@ -404,8 +401,8 @@ pub const START_PAGE_HTML: &str = r###"<!DOCTYPE html>
             box-shadow: 0 25px 70px rgba(0, 0, 0, 0.85), 0 0 35px rgba(168, 85, 247, 0.3);
             border-radius: 20px;
             width: 100%;
-            max-width: 600px;
-            height: 520px;
+            max-width: 650px;
+            height: 540px;
             display: flex;
             flex-direction: column;
             overflow: hidden;
@@ -420,9 +417,10 @@ pub const START_PAGE_HTML: &str = r###"<!DOCTYPE html>
         }
         .aether-settings-nav {
             display: flex;
-            gap: 12px;
+            gap: 10px;
             padding: 12px 22px;
             border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+            background: rgba(15, 9, 28, 0.5);
         }
         .aether-s-tab {
             padding: 6px 14px;
@@ -456,20 +454,44 @@ pub const START_PAGE_HTML: &str = r###"<!DOCTYPE html>
             cursor: pointer;
             transition: background 0.15s;
         }
-        .aether-history-item:hover {
-            background: rgba(147, 51, 234, 0.25);
-        }
+        .aether-history-item:hover { background: rgba(147, 51, 234, 0.25); }
         .aether-history-del {
             color: #94a3b8;
             padding: 2px 6px;
             border-radius: 4px;
         }
         .aether-history-del:hover { color: #fca5a5; background: rgba(239, 68, 68, 0.25); }
+
+        /* Стили вкладки Пароли */
+        .aether-pwd-card {
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid rgba(168, 85, 247, 0.2);
+            border-radius: 10px;
+            padding: 12px 14px;
+            margin-bottom: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        .aether-pwd-site { font-weight: 600; color: #f8fafc; font-size: 13.5px; }
+        .aether-pwd-login { font-size: 12px; color: #a78bfa; margin-top: 2px; }
+        .aether-pwd-actions { display: flex; align-items: center; gap: 8px; }
+        .aether-pwd-btn {
+            background: rgba(168, 85, 247, 0.15);
+            border: 1px solid rgba(168, 85, 247, 0.3);
+            border-radius: 6px;
+            padding: 4px 8px;
+            font-size: 11.5px;
+            color: #d8b4fe;
+            cursor: pointer;
+            transition: all 0.15s;
+        }
+        .aether-pwd-btn:hover { background: rgba(168, 85, 247, 0.35); color: #fff; }
     </style>
 </head>
 <body>
     <button id="aether-top-settings" onclick="openSettings('history')">
-        <span>⚙️</span> <span>Настройки и История</span>
+        <span>⚙️</span> <span>Настройки</span>
     </button>
 
     <div id="aether-clock-wrap">
@@ -478,15 +500,32 @@ pub const START_PAGE_HTML: &str = r###"<!DOCTYPE html>
     </div>
 
     <div id="aether-logo-wrap">
-        <span id="aether-logo-icon">🌌</span>
+        <svg class="aether-emblem-svg" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <rect width="100" height="100" rx="26" fill="url(#aether_logo_bg)"/>
+            <rect x="2" y="2" width="96" height="96" rx="24" stroke="url(#aether_logo_glow)" stroke-width="3"/>
+            <ellipse cx="50" cy="50" rx="38" ry="18" stroke="#38bdf8" stroke-width="2.5" opacity="0.85" transform="rotate(-25 50 50)"/>
+            <path d="M38 72L50 28L62 72M42 58H58" stroke="#f8fafc" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round"/>
+            <circle cx="72" cy="28" r="3.5" fill="#ffffff" filter="drop-shadow(0 0 4px #fff)"/>
+            <defs>
+                <linearGradient id="aether_logo_bg" x1="0" y1="0" x2="100" y2="100" gradientUnits="userSpaceOnUse">
+                    <stop stop-color="#180730"/>
+                    <stop offset="0.5" stop-color="#4c1d95"/>
+                    <stop offset="1" stop-color="#7c3aed"/>
+                </linearGradient>
+                <linearGradient id="aether_logo_glow" x1="0" y1="0" x2="100" y2="100" gradientUnits="userSpaceOnUse">
+                    <stop stop-color="#c084fc"/>
+                    <stop offset="1" stop-color="#38bdf8"/>
+                </linearGradient>
+            </defs>
+        </svg>
         <span id="aether-logo-text">AETHER</span>
     </div>
 
     <div id="aether-search-container">
         <form id="aether-search-box" onsubmit="handleSearchSubmit(event)">
-            <input id="aether-search-input" type="text" placeholder="Поиск в Google, запрос 'yt: ...' или ввод адреса..." autocomplete="off" autofocus />
-            <button id="aether-search-btn" type="submit">
-                <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            <input id="aether-search-input" type="text" placeholder="Поиск или URL-адрес..." autocomplete="off" autofocus />
+            <button id="aether-search-btn" type="submit" title="Искать">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
             </button>
         </form>
         <div id="aether-ac-dropdown"></div>
@@ -533,17 +572,18 @@ pub const START_PAGE_HTML: &str = r###"<!DOCTYPE html>
         </div>
     </div>
 
-    <!-- Окно НАСТРОЕК И ИСТОРИИ -->
+    <!-- Окно НАСТРОЕК -->
     <div id="aether-settings-modal">
         <div id="aether-settings-box">
             <div class="aether-settings-header">
                 <div style="font-weight:600; font-size:16px; display:flex; align-items:center; gap:8px;">
-                    <span>⚙️</span> <span>Настройки Aether Browser</span>
+                    <span>⚙️</span> <span>Настройки</span>
                 </div>
                 <span onclick="closeSettings()" style="cursor:pointer; color:#94a3b8; font-size:16px;">✕</span>
             </div>
             <div class="aether-settings-nav">
                 <span class="aether-s-tab active" id="tab-btn-history" onclick="switchSettingsTab('history')">🕒 История</span>
+                <span class="aether-s-tab" id="tab-btn-passwords" onclick="switchSettingsTab('passwords')">🔑 Пароли</span>
                 <span class="aether-s-tab" id="tab-btn-ui" onclick="switchSettingsTab('ui')">🎛️ Боковая панель</span>
                 <span class="aether-s-tab" id="tab-btn-diag" onclick="switchSettingsTab('diag')">📁 Логи и Диагностика</span>
             </div>
@@ -729,7 +769,6 @@ pub const START_PAGE_HTML: &str = r###"<!DOCTYPE html>
             grid.innerHTML = '';
             const cards = getCustomCards();
 
-            // Кнопка добавления: всегда слева от добавленных карточек
             const addBtn = document.createElement('div');
             addBtn.className = 'aether-card-add';
             addBtn.onclick = openAddModal;
@@ -794,7 +833,33 @@ pub const START_PAGE_HTML: &str = r###"<!DOCTYPE html>
             closeAddModal();
         }
 
-        // --- Окно настроек и истории ---
+        // --- Менеджер паролей ---
+        function getPasswords() {
+            try {
+                const raw = localStorage.getItem('aether_passwords');
+                if (raw) return JSON.parse(raw);
+            } catch (_) {}
+            return [];
+        }
+
+        function savePasswords(list) {
+            try { localStorage.setItem('aether_passwords', JSON.stringify(list)); } catch (_) {}
+            renderPasswordsTab();
+        }
+
+        function addPassword(site, login, pass) {
+            if (!site || !login || !pass) return;
+            const list = getPasswords();
+            list.push({ id: Date.now().toString(), site, login, pass });
+            savePasswords(list);
+        }
+
+        function deletePassword(id) {
+            const list = getPasswords().filter(p => p.id !== id);
+            savePasswords(list);
+        }
+
+        // --- Окно настроек ---
         function openSettings(tab = 'history') {
             document.getElementById('aether-settings-modal').style.display = 'flex';
             switchSettingsTab(tab);
@@ -809,6 +874,7 @@ pub const START_PAGE_HTML: &str = r###"<!DOCTYPE html>
             if (tabBtn) tabBtn.classList.add('active');
 
             if (tab === 'history') renderHistoryTab();
+            else if (tab === 'passwords') renderPasswordsTab();
             else if (tab === 'ui') renderUiTab();
             else if (tab === 'diag') renderDiagTab();
         }
@@ -852,6 +918,88 @@ pub const START_PAGE_HTML: &str = r###"<!DOCTYPE html>
             area.innerHTML = html;
         }
 
+        function renderPasswordsTab() {
+            const area = document.getElementById('settings-content-area');
+            const pwds = getPasswords();
+
+            let html = `
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px;">
+                    <span style="font-size:13px; color:#cbd5e1;">Сохранено паролей: ${pwds.length}</span>
+                    <button onclick="showAddPasswordForm()" style="background:linear-gradient(135deg,#9333ea,#7c3aed); border:none; color:#fff; padding:6px 12px; border-radius:6px; cursor:pointer; font-size:12px; font-weight:500;">+ Добавить пароль</button>
+                </div>
+
+                <div id="add-pwd-form-wrap" style="display:none; background:rgba(255,255,255,0.04); border:1px solid rgba(168,85,247,0.3); border-radius:10px; padding:14px; margin-bottom:14px;">
+                    <div style="font-weight:600; font-size:13px; margin-bottom:8px; color:#e2e8f0;">Новый аккаунт</div>
+                    <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:8px;">
+                        <input id="np-site" placeholder="Сайт (например, vk.com)" style="background:rgba(20,12,38,0.9); border:1px solid rgba(168,85,247,0.3); border-radius:6px; padding:6px 10px; color:#fff; font-size:12px; outline:none;" />
+                        <input id="np-login" placeholder="Логин или Email" style="background:rgba(20,12,38,0.9); border:1px solid rgba(168,85,247,0.3); border-radius:6px; padding:6px 10px; color:#fff; font-size:12px; outline:none;" />
+                    </div>
+                    <div style="display:flex; gap:8px;">
+                        <input id="np-pass" type="password" placeholder="Пароль" style="flex:1; background:rgba(20,12,38,0.9); border:1px solid rgba(168,85,247,0.3); border-radius:6px; padding:6px 10px; color:#fff; font-size:12px; outline:none;" />
+                        <button onclick="submitNewPassword()" style="background:#9333ea; border:none; color:#fff; border-radius:6px; padding:6px 14px; cursor:pointer; font-size:12px;">Сохранить</button>
+                        <button onclick="document.getElementById('add-pwd-form-wrap').style.display='none'" style="background:rgba(255,255,255,0.1); border:none; color:#cbd5e1; border-radius:6px; padding:6px 10px; cursor:pointer; font-size:12px;">Отмена</button>
+                    </div>
+                </div>
+            `;
+
+            if (pwds.length === 0) {
+                html += `
+                    <div style="text-align:center; padding: 30px; color:#94a3b8;">
+                        <div style="font-size:32px; margin-bottom:8px;">🔑</div>
+                        <div>Нет сохраненных паролей</div>
+                    </div>
+                `;
+            } else {
+                pwds.forEach(p => {
+                    html += `
+                        <div class="aether-pwd-card">
+                            <div>
+                                <div class="aether-pwd-site">🌐 ${p.site}</div>
+                                <div class="aether-pwd-login">Логин: <b>${p.login}</b></div>
+                            </div>
+                            <div class="aether-pwd-actions">
+                                <span id="pwd-val-${p.id}" style="font-family:monospace; font-size:12.5px; color:#c084fc; letter-spacing:2px;">••••••••</span>
+                                <button class="aether-pwd-btn" title="Показать/скрыть" onclick="togglePasswordVisibility('${p.id}', '${p.pass.replace(/'/g, "\\'")}')">👁️</button>
+                                <button class="aether-pwd-btn" title="Скопировать пароль" onclick="navigator.clipboard.writeText('${p.pass.replace(/'/g, "\\'")}'); alert('Пароль скопирован!');">📋 Пароль</button>
+                                <button class="aether-pwd-btn" title="Скопировать логин" onclick="navigator.clipboard.writeText('${p.login.replace(/'/g, "\\'")}'); alert('Логин скопирован!');">📋 Логин</button>
+                                <button class="aether-pwd-btn" style="color:#fca5a5;" title="Удалить" onclick="deletePassword('${p.id}')">✕</button>
+                            </div>
+                        </div>
+                    `;
+                });
+            }
+
+            area.innerHTML = html;
+        }
+
+        function showAddPasswordForm() {
+            const form = document.getElementById('add-pwd-form-wrap');
+            if (form) form.style.display = 'block';
+        }
+
+        function submitNewPassword() {
+            const site = document.getElementById('np-site').value.trim();
+            const login = document.getElementById('np-login').value.trim();
+            const pass = document.getElementById('np-pass').value.trim();
+            if (!site || !login || !pass) {
+                alert('Пожалуйста, заполните все поля!');
+                return;
+            }
+            addPassword(site, login, pass);
+        }
+
+        function togglePasswordVisibility(id, realPass) {
+            const span = document.getElementById('pwd-val-' + id);
+            if (!span) return;
+            if (span.textContent === '••••••••') {
+                span.textContent = realPass;
+                span.style.letterSpacing = '0.5px';
+            } else {
+                span.textContent = '••••••••';
+                span.style.letterSpacing = '2px';
+            }
+        }
+
         function renderUiTab() {
             const area = document.getElementById('settings-content-area');
             const currentMode = localStorage.getItem('aether_sidebar_mode') || 'autohide';
@@ -892,14 +1040,28 @@ pub const START_PAGE_HTML: &str = r###"<!DOCTYPE html>
                     <div style="font-size:13px; color:#cbd5e1; line-height:1.5;">
                         Все события, переходы, клики по кнопке «Домой» и ошибки автоматически записываются в реальном времени в файл лога на вашем Рабочем столе:
                     </div>
-                    <div style="background:rgba(20,12,38,0.9); border:1px solid rgba(168,85,247,0.3); border-radius:8px; padding:10px 14px; font-family:monospace; font-size:12px; color:#c084fc;">
-                        %USERPROFILE%\\Desktop\\aether_debug.log
+                    <div style="display:flex; align-items:center; gap:8px;">
+                        <div style="flex:1; background:rgba(20,12,38,0.9); border:1px solid rgba(168,85,247,0.3); border-radius:8px; padding:10px 14px; font-family:monospace; font-size:12px; color:#c084fc;">
+                            %USERPROFILE%\\Desktop\\aether_debug.log
+                        </div>
+                        <button onclick="openLogInExplorer()" style="background:linear-gradient(135deg,#9333ea,#7c3aed); border:none; border-radius:8px; padding:10px 14px; color:#fff; font-size:12px; font-weight:500; cursor:pointer; display:flex; align-items:center; gap:6px; box-shadow:0 4px 15px rgba(147,51,234,0.4);" title="Открыть Проводник и выделить файл">
+                            <span>📂</span> <span>Показать файл на Рабочем столе</span>
+                        </button>
                     </div>
-                    <div style="font-size:12px; color:#94a3b8;">
-                        Если вы сталкиваетесь с проблемой, вы можете просто открыть этот файл с Рабочего стола и отправить его текст.
+                    <div style="font-size:12px; color:#94a3b8; margin-top:4px;">
+                        Нажатие на кнопку сразу откроет Проводник Windows и подсветит файл лога.
                     </div>
                 </div>
             `;
+        }
+
+        function openLogInExplorer() {
+            log("Запрос открытия проводника с лог-файлом");
+            if (window.ipc && window.ipc.postMessage) {
+                try {
+                    window.ipc.postMessage("open_log_in_explorer");
+                } catch (_) {}
+            }
         }
 
         renderGrid();
@@ -1066,10 +1228,8 @@ pub const AETHER_CORE_SCRIPT: &str = r###"
 
     updateCurrentTabInfo();
 
-    // 3. ПЛАВАЮЩИЙ САЙДБАР ARC: 100% ЧИСТЫЙ САЙТ БЕЗ ИЗМЕНЕНИЙ ВЕРСТКИ
-    // Важно: Мы НЕ МЕНЯЕМ html { margin-left }, #guide, #masthead-container или другие элементы сайта!
+    // 3. ПЛАВАЮЩИЙ САЙДБАР ARC
     const SIDEBAR_CSS = `
-        /* Кнопка-триггер в левом верхнем углу сайта */
         #aether-trigger-pill {
             position: fixed !important;
             top: 10px !important;
@@ -1099,7 +1259,6 @@ pub const AETHER_CORE_SCRIPT: &str = r###"
             box-shadow: 0 6px 20px rgba(168, 85, 247, 0.5) !important;
         }
 
-        /* Невидимая полоса детекции наведения у левого края (8px) */
         #aether-hover-edge {
             position: fixed !important;
             top: 0 !important;
@@ -1110,7 +1269,6 @@ pub const AETHER_CORE_SCRIPT: &str = r###"
             background: transparent !important;
         }
 
-        /* Сам плавающий сайдбар */
         #aether-arc-sidebar {
             position: fixed !important;
             top: 0 !important;
@@ -1154,13 +1312,8 @@ pub const AETHER_CORE_SCRIPT: &str = r###"
             -webkit-text-fill-color: transparent !important;
         }
         .aether-sb-brand-icon {
-            font-size: 15px !important;
+            font-size: 14px !important;
             -webkit-text-fill-color: initial !important;
-        }
-        .aether-sb-btn-box {
-            display: flex !important;
-            align-items: center !important;
-            gap: 4px !important;
         }
         .aether-sb-tool-btn {
             background: rgba(255, 255, 255, 0.05) !important;
@@ -1262,10 +1415,6 @@ pub const AETHER_CORE_SCRIPT: &str = r###"
             background: rgba(36, 20, 68, 0.95) !important;
             border-color: rgba(192, 132, 252, 0.6) !important;
             color: #fff !important;
-        }
-        .aether-sb-fav-tile.add-btn {
-            border: 1px dashed rgba(168, 85, 247, 0.4) !important;
-            color: #c084fc !important;
         }
         .aether-sb-active-dot {
             position: absolute !important;
@@ -1394,46 +1543,6 @@ pub const AETHER_CORE_SCRIPT: &str = r###"
             border-color: rgba(168, 85, 247, 0.45) !important;
         }
 
-        /* Меню ПКМ по видео */
-        #aether-video-menu {
-            position: fixed !important;
-            background: rgba(15, 9, 30, 0.96) !important;
-            backdrop-filter: blur(16px) !important;
-            border: 1px solid rgba(168, 85, 247, 0.45) !important;
-            border-radius: 12px !important;
-            box-shadow: 0 15px 40px rgba(0, 0, 0, 0.85), 0 0 20px rgba(168, 85, 247, 0.3) !important;
-            padding: 6px 0 !important;
-            min-width: 210px !important;
-            z-index: 2147483647 !important;
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif !important;
-            user-select: none !important;
-            color: #f1f5f9 !important;
-            display: none;
-        }
-        .aether-vm-header {
-            padding: 6px 14px 4px !important;
-            font-size: 10.5px !important;
-            font-weight: 600 !important;
-            color: #a78bfa !important;
-            text-transform: uppercase !important;
-            letter-spacing: 0.5px !important;
-            border-bottom: 1px solid rgba(255, 255, 255, 0.06) !important;
-            margin-bottom: 4px !important;
-        }
-        .aether-vm-item {
-            padding: 8px 14px !important;
-            font-size: 12.5px !important;
-            display: flex !important;
-            align-items: center !important;
-            gap: 9px !important;
-            cursor: pointer !important;
-            transition: background 0.15s !important;
-        }
-        .aether-vm-item:hover {
-            background: rgba(147, 51, 234, 0.35) !important;
-            color: #ffffff !important;
-        }
-
         #aether-toast {
             position: fixed !important;
             top: 18px !important;
@@ -1511,13 +1620,18 @@ pub const AETHER_CORE_SCRIPT: &str = r###"
     function renderSidebar() {
         injectStyle();
 
-        // 1. Кнопка-триггер в левом верхнем углу
         let triggerPill = document.getElementById('aether-trigger-pill');
         if (!triggerPill) {
             triggerPill = document.createElement('div');
             triggerPill.id = 'aether-trigger-pill';
             triggerPill.title = 'Открыть меню Aether (Ctrl + B)';
-            triggerPill.textContent = '🌌';
+            triggerPill.innerHTML = `
+                <svg width="18" height="18" viewBox="0 0 100 100" fill="none">
+                    <rect width="100" height="100" rx="26" fill="#4c1d95"/>
+                    <ellipse cx="50" cy="50" rx="38" ry="18" stroke="#38bdf8" stroke-width="4" transform="rotate(-25 50 50)"/>
+                    <path d="M38 72L50 28L62 72M42 58H58" stroke="#fff" stroke-width="6" stroke-linecap="round"/>
+                </svg>
+            `;
             triggerPill.onclick = (e) => {
                 e.stopPropagation();
                 toggleSidebar();
@@ -1525,7 +1639,6 @@ pub const AETHER_CORE_SCRIPT: &str = r###"
             document.documentElement.appendChild(triggerPill);
         }
 
-        // 2. Детектор наведения мыши у левого края
         let hoverEdge = document.getElementById('aether-hover-edge');
         if (!hoverEdge) {
             hoverEdge = document.createElement('div');
@@ -1534,14 +1647,11 @@ pub const AETHER_CORE_SCRIPT: &str = r###"
             document.documentElement.appendChild(hoverEdge);
         }
 
-        // 3. Плавающий сайдбар
         let sidebar = document.getElementById('aether-arc-sidebar');
         if (!sidebar) {
             sidebar = document.createElement('div');
             sidebar.id = 'aether-arc-sidebar';
-            sidebar.addEventListener('mouseleave', () => {
-                closeSidebar();
-            });
+            sidebar.addEventListener('mouseleave', closeSidebar);
             document.documentElement.appendChild(sidebar);
         }
 
@@ -1598,7 +1708,7 @@ pub const AETHER_CORE_SCRIPT: &str = r###"
             </div>
         `);
 
-        // Рендерим быстрые карточки в сайдбаре
+        // Быстрые карточки
         const favContainer = document.getElementById('aether-sb-favorites');
         const customCards = getCustomCards();
 
@@ -1683,29 +1793,20 @@ pub const AETHER_CORE_SCRIPT: &str = r###"
         document.getElementById('aether-sb-pip').onclick = togglePiP;
     }
 
-    // 5. КОНТЕКСТНОЕ МЕНЮ ПКМ ПО ВИДЕО
-    function setupVideoContextMenu() {
+    // 5. КОНТЕКСТНОЕ МЕНЮ ПКМ ПО ВИДЕО (Создается ТОЛЬКО при реальном ПКМ по видео!)
+    function showVideoMenu(x, y) {
         let menu = document.getElementById('aether-video-menu');
         if (!menu) {
             menu = document.createElement('div');
             menu.id = 'aether-video-menu';
+            menu.style.cssText = "display:none; position:fixed; z-index:2147483647; background:rgba(15,9,30,0.96); backdrop-filter:blur(16px); border:1px solid rgba(168,85,247,0.45); border-radius:12px; box-shadow:0 15px 40px rgba(0,0,0,0.85); padding:6px 0; min-width:210px; font-family:sans-serif; color:#f1f5f9; user-select:none;";
             safeSetHTML(menu, `
-                <div class="aether-vm-header">🎬 Aether Медиа</div>
-                <div class="aether-vm-item" id="aether-vmi-download">
-                    <span>⬇️</span> <span>Скачать видео (yt-dlp)</span>
-                </div>
-                <div class="aether-vm-item" id="aether-vmi-pip">
-                    <span>🔲</span> <span>Картинка в картинке</span>
-                </div>
-                <div class="aether-vm-item" id="aether-vmi-audio">
-                    <span>🎧</span> <span>Режим «Только аудио»</span>
-                </div>
-                <div class="aether-vm-item" id="aether-vmi-speed">
-                    <span>⚡</span> <span>Скорость 2x / 1x</span>
-                </div>
-                <div class="aether-vm-item" id="aether-vmi-copy">
-                    <span>📋</span> <span>Скопировать ссылку</span>
-                </div>
+                <div style="padding:6px 14px 4px; font-size:10.5px; font-weight:600; color:#a78bfa; text-transform:uppercase; border-bottom:1px solid rgba(255,255,255,0.06); margin-bottom:4px;">🎬 Aether Медиа</div>
+                <div id="aether-vmi-download" style="padding:8px 14px; font-size:12.5px; display:flex; align-items:center; gap:9px; cursor:pointer;"><span>⬇️</span> <span>Скачать видео (yt-dlp)</span></div>
+                <div id="aether-vmi-pip" style="padding:8px 14px; font-size:12.5px; display:flex; align-items:center; gap:9px; cursor:pointer;"><span>🔲</span> <span>Картинка в картинке</span></div>
+                <div id="aether-vmi-audio" style="padding:8px 14px; font-size:12.5px; display:flex; align-items:center; gap:9px; cursor:pointer;"><span>🎧</span> <span>Режим «Только аудио»</span></div>
+                <div id="aether-vmi-speed" style="padding:8px 14px; font-size:12.5px; display:flex; align-items:center; gap:9px; cursor:pointer;"><span>⚡</span> <span>Скорость 2x / 1x</span></div>
+                <div id="aether-vmi-copy" style="padding:8px 14px; font-size:12.5px; display:flex; align-items:center; gap:9px; cursor:pointer;"><span>📋</span> <span>Скопировать ссылку</span></div>
             `);
             document.documentElement.appendChild(menu);
 
@@ -1722,28 +1823,30 @@ pub const AETHER_CORE_SCRIPT: &str = r###"
             };
         }
 
-        document.addEventListener('contextmenu', (e) => {
-            if (e.shiftKey) return;
-            const isVideo = e.target.closest('video, .html5-video-player, ytd-player, #player, .video-stream');
-            if (isVideo) {
-                e.preventDefault();
-                e.stopPropagation();
-                menu.style.display = 'block';
-                const x = Math.min(e.clientX, window.innerWidth - 220);
-                const y = Math.min(e.clientY, window.innerHeight - 200);
-                menu.style.left = x + 'px';
-                menu.style.top = y + 'px';
-            } else {
-                menu.style.display = 'none';
-            }
-        }, true);
-
-        document.addEventListener('click', (e) => {
-            if (!menu.contains(e.target)) menu.style.display = 'none';
-        });
+        const menuX = Math.min(x, window.innerWidth - 220);
+        const menuY = Math.min(y, window.innerHeight - 200);
+        menu.style.left = menuX + 'px';
+        menu.style.top = menuY + 'px';
+        menu.style.display = 'block';
     }
 
-    setupVideoContextMenu();
+    document.addEventListener('contextmenu', (e) => {
+        if (e.shiftKey) return;
+        const isVideo = e.target.closest('video, .html5-video-player, ytd-player, #player, .video-stream');
+        if (isVideo) {
+            e.preventDefault();
+            e.stopPropagation();
+            showVideoMenu(e.clientX, e.clientY);
+        } else {
+            const menu = document.getElementById('aether-video-menu');
+            if (menu) menu.style.display = 'none';
+        }
+    }, true);
+
+    document.addEventListener('click', (e) => {
+        const menu = document.getElementById('aether-video-menu');
+        if (menu && !menu.contains(e.target)) menu.style.display = 'none';
+    });
 
     function toggleVideoSpeed() {
         const video = document.querySelector('video');
