@@ -12,7 +12,7 @@ use wry::{WebContext, WebViewBuilder};
 const APP_NAME: &str = "Aether";
 const DEFAULT_HOME_URL: &str = "https://www.google.com";
 
-fn main() -> wry::Result<()> {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     let event_loop = EventLoop::new();
 
     // 1. Создаем нативное окно через Tao (чистый кроссплатформенный интерфейс)
