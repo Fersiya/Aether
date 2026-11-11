@@ -1,6 +1,6 @@
 [package]
 name = "aether-browser"
-version = "0.6.5"
+version = "0.6.6"
 edition = "2021"
 authors = ["Aether Team"]
 description = "Aether Browser — Ультралегкий и быстрый медиа-браузер на Rust с защитой от рекламы, интеграцией Google, YouTube, VK и медиа-контролем."

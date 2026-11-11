@@ -7,11 +7,11 @@ use std::path::PathBuf;
 use tao::{
     event::{Event, StartCause, WindowEvent},
     event_loop::{ControlFlow, EventLoopBuilder},
-    window::{Icon, Theme, WindowBuilder},
+    window::{Fullscreen, Icon, Theme, WindowBuilder},
 };
 #[cfg(target_os = "windows")]
 use tao::platform::windows::WindowExtWindows;
-use wry::{http::Request, WebContext, WebViewBuilder};
+use wry::{http::Request, NewWindowResponse, WebContext, WebViewBuilder};
 
 const APP_NAME: &str = "Aether";
 const START_URL: &str = "http://aether.localhost/";
@@ -22,6 +22,8 @@ enum UserEvent {
     GoHome,
     Navigate(String),
     SaveCards(String),
+    SetFullscreen(bool),
+    OpenNewTab(String),
 }
 
 fn get_desktop_log_path() -> PathBuf {
@@ -61,16 +63,17 @@ fn show_error_dialog(title: &str, message: &str) {
 }
 
 fn run_app() -> Result<(), Box<dyn std::error::Error>> {
-    log_desktop("=== Aether Browser v0.6.5: Запуск приложения ===");
+    log_desktop("=== Aether Browser v0.6.6: Запуск приложения ===");
 
     let event_loop = EventLoopBuilder::<UserEvent>::with_user_event().build();
     let proxy = event_loop.create_proxy();
+    let new_window_proxy = proxy.clone();
 
     // 1. Создаем нативное окно через Tao с глубокой тёмной темой и качественной иконкой
     let window_icon = Icon::from_rgba(ICON_RGBA.to_vec(), 256, 256).ok();
 
     let window = WindowBuilder::new()
-        .with_title(format!("{} v0.6.5 — Легкий медиа-браузер", APP_NAME))
+        .with_title(format!("{} v0.6.6 — Легкий медиа-браузер", APP_NAME))
         .with_window_icon(window_icon)
         .with_inner_size(tao::dpi::LogicalSize::new(1440.0, 900.0))
         .with_theme(Some(Theme::Dark))
@@ -138,6 +141,11 @@ fn run_app() -> Result<(), Box<dyn std::error::Error>> {
                 .unwrap()
         })
         .with_initialization_script(&core_script)
+        .with_new_window_req_handler(move |url, _features| {
+            log_desktop(&format!("with_new_window_req_handler: перехвачен запрос нового окна: {}", url));
+            let _ = new_window_proxy.send_event(UserEvent::OpenNewTab(url));
+            NewWindowResponse::Deny
+        })
         .with_ipc_handler(move |req: Request<String>| {
             let body = req.body().trim();
             if body == "go_home" {
@@ -150,6 +158,10 @@ fn run_app() -> Result<(), Box<dyn std::error::Error>> {
                 log_desktop("IPC handler: save_cards");
                 let _ = std::fs::write(&cards_file_ipc, json);
                 ipc_proxy.send_event(UserEvent::SaveCards(json.to_string())).ok();
+            } else if let Some(fs_val) = body.strip_prefix("set_fullscreen:") {
+                let enabled = fs_val.trim() == "true";
+                log_desktop(&format!("IPC handler: set_fullscreen({})", enabled));
+                ipc_proxy.send_event(UserEvent::SetFullscreen(enabled)).ok();
             } else if body == "open_log_in_explorer" {
                 let log_path = get_desktop_log_path();
                 log_desktop(&format!("IPC handler: открытие проводника с выделением файла {:?}", log_path));
@@ -174,7 +186,7 @@ fn run_app() -> Result<(), Box<dyn std::error::Error>> {
 
         match event {
             Event::NewEvents(StartCause::Init) => {
-                log_desktop("[Aether v0.6.5] Готов к работе!");
+                log_desktop("[Aether v0.6.6] Готов к работе!");
             }
             Event::WindowEvent {
                 event: WindowEvent::CloseRequested,
@@ -199,6 +211,19 @@ fn run_app() -> Result<(), Box<dyn std::error::Error>> {
                         log_desktop(&format!("UserEvent::Navigate -> webview.load_url({})", valid_url));
                         let res = webview.load_url(&valid_url);
                         log_desktop(&format!("load_url результат: {:?}", res));
+                    }
+                    UserEvent::SetFullscreen(enabled) => {
+                        log_desktop(&format!("UserEvent::SetFullscreen({})", enabled));
+                        if enabled {
+                            window.set_fullscreen(Some(Fullscreen::Borderless(None)));
+                        } else {
+                            window.set_fullscreen(None);
+                        }
+                    }
+                    UserEvent::OpenNewTab(url) => {
+                        log_desktop(&format!("UserEvent::OpenNewTab({})", url));
+                        let script = format!("if (typeof createNewTab === 'function') {{ createNewTab({:?}); }} else {{ window.location.href = {:?}; }}", url, url);
+                        let _ = webview.evaluate_script(&script);
                     }
                     UserEvent::SaveCards(_) => {}
                 }

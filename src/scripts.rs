@@ -1,10 +1,12 @@
-//! Встроенный рантайм Aether Browser v0.6.5 (Arc / Zen Style):
-//! - Чистый веб-контент: нулевые модификации html/body/элементов сайтов — YouTube и VK работают на 100% без сдвигов и багов
-//! - Плавающий авто-скрывающийся сайдбар Arc Style
-//! - Новая вкладка "Пароли" в Настройках: сохранение логинов и паролей с просмотром 👁️, копированием 📋 и удалением
-//! - Кнопка "Показать файл на Рабочем столе" в Настройках: мгновенно открывает Проводник и выделяет aether_debug.log
-//! - Исправлен баг появления контекстного меню на белом экране при загрузке сайтов
-//! - Новый векторный логотип Aether и качественная иконка приложения
+//! Встроенный рантайм Aether Browser v0.6.6 (Arc / Zen Style):
+//! - Полноэкранный режим видео (YouTube/VK/фильмы): нативное скрытие панели задач Windows через Borderless Fullscreen в Tao
+//! - Устранение любого затемнения слева: сайдбар при скрытии полностью прозрачен и не отбрасывает тень на сайт
+//! - Открытие ссылок по клику колёсиком мыши (middle-click) в новой вкладке Aether (а не в отдельном окне)
+//! - Перехват target="_blank" и window.open для открытия во вкладках браузера
+//! - Быстрые сервисы с реальными логотипами (YouTube, VK, Telegram, GitHub, Twitch, Кинопоиск, фавиконки любых сайтов через CDN)
+//! - Рекомендация часто посещаемых сайтов (от 3 визитов) в модальном окне добавления быстрого сервиса
+//! - Запрос подтверждения при очистке истории
+//! - Мгновенный неоновый индикатор загрузки (Top Glowing Progress Bar) для мгновенного визуального отклика на клик
 
 pub const START_PAGE_HTML: &str = r###"<!DOCTYPE html>
 <html lang="ru">
@@ -31,6 +33,20 @@ pub const START_PAGE_HTML: &str = r###"<!DOCTYPE html>
             user-select: none;
             overflow-x: hidden;
             position: relative;
+        }
+
+        #aether-progress-bar {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 0%;
+            height: 3px;
+            background: linear-gradient(90deg, #9333ea, #a855f7, #38bdf8, #c084fc);
+            box-shadow: 0 0 10px rgba(192, 132, 252, 0.8), 0 0 20px rgba(147, 51, 234, 0.5);
+            z-index: 2147483647;
+            pointer-events: none;
+            transition: width 0.25s cubic-bezier(0.1, 0.9, 0.2, 1), opacity 0.2s ease;
+            opacity: 0;
         }
 
         /* Кнопка настроек в правом верхнем углу */
@@ -218,6 +234,10 @@ pub const START_PAGE_HTML: &str = r###"<!DOCTYPE html>
             transform: translateY(-3px);
             box-shadow: 0 12px 30px rgba(0, 0, 0, 0.55), 0 0 20px rgba(168, 85, 247, 0.35);
         }
+        .aether-card:active {
+            transform: scale(0.95);
+            filter: brightness(1.15);
+        }
         .aether-card-icon {
             width: 44px;
             height: 44px;
@@ -232,8 +252,25 @@ pub const START_PAGE_HTML: &str = r###"<!DOCTYPE html>
             background: linear-gradient(135deg, rgba(147, 51, 234, 0.3), rgba(124, 58, 237, 0.2));
             border: 1px solid rgba(168, 85, 247, 0.4);
             color: #d8b4fe;
+            overflow: hidden;
         }
         .aether-card:hover .aether-card-icon { transform: scale(1.08); }
+        .aether-card-svg {
+            width: 26px;
+            height: 26px;
+            filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.45));
+        }
+        .aether-card-favicon {
+            width: 28px;
+            height: 28px;
+            border-radius: 6px;
+            object-fit: contain;
+        }
+        .aether-card-fallback-letter {
+            font-size: 19px;
+            font-weight: 700;
+            color: #d8b4fe;
+        }
         .aether-card-name {
             font-size: 12.5px;
             font-weight: 500;
@@ -490,6 +527,7 @@ pub const START_PAGE_HTML: &str = r###"<!DOCTYPE html>
     </style>
 </head>
 <body>
+    <div id="aether-progress-bar"></div>
     <button id="aether-top-settings" onclick="openSettings('history')">
         <span>⚙️</span> <span>Настройки</span>
     </button>
@@ -549,14 +587,7 @@ pub const START_PAGE_HTML: &str = r###"<!DOCTYPE html>
                 <span>Добавить быстрый сервис</span>
                 <span onclick="closeAddModal()" style="cursor:pointer; color:#94a3b8; font-size:16px;">✕</span>
             </div>
-            <div class="aether-presets">
-                <span class="aether-preset-chip" onclick="applyPreset('YouTube', 'https://www.youtube.com')">YouTube</span>
-                <span class="aether-preset-chip" onclick="applyPreset('ВКонтакте', 'https://vk.com')">ВКонтакте</span>
-                <span class="aether-preset-chip" onclick="applyPreset('Telegram', 'https://web.telegram.org')">Telegram</span>
-                <span class="aether-preset-chip" onclick="applyPreset('GitHub', 'https://github.com')">GitHub</span>
-                <span class="aether-preset-chip" onclick="applyPreset('Twitch', 'https://www.twitch.tv')">Twitch</span>
-                <span class="aether-preset-chip" onclick="applyPreset('Кинопоиск', 'https://www.kinopoisk.ru')">Кинопоиск</span>
-            </div>
+            <div id="aether-modal-presets-wrap"></div>
             <div class="aether-modal-input-group">
                 <label class="aether-modal-label">Название сервиса</label>
                 <input id="modal-name" class="aether-modal-input" placeholder="например, YouTube" autocomplete="off" />
@@ -625,6 +656,31 @@ pub const START_PAGE_HTML: &str = r###"<!DOCTYPE html>
             { name: 'ChatGPT', domain: 'chatgpt.com', url: 'https://chatgpt.com', icon: '💬' }
         ];
 
+        function triggerLoadProgress() {
+            let bar = document.getElementById('aether-progress-bar');
+            if (!bar) {
+                bar = document.createElement('div');
+                bar.id = 'aether-progress-bar';
+                document.body.appendChild(bar);
+            }
+            bar.style.opacity = '1';
+            bar.style.width = '35%';
+            setTimeout(() => {
+                if (bar.style.opacity === '1') bar.style.width = '75%';
+            }, 100);
+        }
+
+        function completeLoadProgress() {
+            const bar = document.getElementById('aether-progress-bar');
+            if (bar) {
+                bar.style.width = '100%';
+                setTimeout(() => {
+                    bar.style.opacity = '0';
+                    setTimeout(() => { bar.style.width = '0%'; }, 200);
+                }, 150);
+            }
+        }
+
         function getHistory() {
             try {
                 const raw = localStorage.getItem('aether_search_history');
@@ -639,10 +695,26 @@ pub const START_PAGE_HTML: &str = r###"<!DOCTYPE html>
             if (!text) return;
             try {
                 let list = getHistory();
+                const existing = list.find(item => item.val.toLowerCase() === text.toLowerCase());
+                const visits = (existing && existing.visits) ? existing.visits + 1 : 1;
                 list = list.filter(item => item.val.toLowerCase() !== text.toLowerCase());
-                list.unshift({ val: text, type: type, ts: Date.now() });
+                list.unshift({ val: text, type: type, ts: Date.now(), visits: visits });
                 if (list.length > 100) list.pop();
                 localStorage.setItem('aether_search_history', JSON.stringify(list));
+
+                // Также сохраняем домен в отдельный реестр посещений
+                if (text.includes('.')) {
+                    let domain = text.replace(/^https?:\/\//, '').replace(/^www\./, '').split('/')[0];
+                    if (domain) {
+                        let visitsMap = {};
+                        try {
+                            const rawMap = localStorage.getItem('aether_site_visits');
+                            if (rawMap) visitsMap = JSON.parse(rawMap);
+                        } catch (_) {}
+                        visitsMap[domain] = (visitsMap[domain] || 0) + 1;
+                        localStorage.setItem('aether_site_visits', JSON.stringify(visitsMap));
+                    }
+                }
             } catch (_) {}
         }
 
@@ -656,13 +728,18 @@ pub const START_PAGE_HTML: &str = r###"<!DOCTYPE html>
         }
 
         function clearAllHistory() {
+            if (!confirm('Вы уверены, что хотите удалить всю историю? Это действие нельзя отменить.')) {
+                return;
+            }
             localStorage.removeItem('aether_search_history');
+            localStorage.removeItem('aether_site_visits');
             renderHistoryTab();
         }
 
         function navigateTo(target) {
             if (!target) return;
             let url = target.trim();
+            triggerLoadProgress();
             saveHistoryItem(url, url.startsWith('http') ? 'url' : 'query');
 
             let dest = url;
@@ -764,6 +841,41 @@ pub const START_PAGE_HTML: &str = r###"<!DOCTYPE html>
             renderGrid();
         }
 
+        function getServiceIcon(name, url) {
+            const cleanUrl = (url || '').toLowerCase();
+            const cleanName = (name || '').toLowerCase();
+            if (cleanUrl.includes('youtube.com') || cleanUrl.includes('youtu.be') || cleanName.includes('youtube') || cleanName.includes('ютуб')) {
+                return `<svg viewBox="0 0 24 24" class="aether-card-svg" style="fill:#ef4444;"><path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/></svg>`;
+            }
+            if (cleanUrl.includes('vk.com') || cleanName.includes('vk') || cleanName.includes('вк')) {
+                return `<svg viewBox="0 0 24 24" class="aether-card-svg" style="fill:#2787f5;"><path d="M12.785 17.5c-5.467 0-8.583-3.746-8.713-9.98h2.729c.09 4.575 2.1 6.51 3.7 6.91V7.52h2.569v3.945c1.572-.17 3.22-1.96 3.78-3.945h2.568c-.43 2.45-2.24 4.24-3.52 4.98 1.28.6 3.32 2.15 4.07 5.0h-2.83c-.59-1.84-2.06-3.26-4.01-3.46v3.46h-.063z"/></svg>`;
+            }
+            if (cleanUrl.includes('telegram') || cleanUrl.includes('t.me') || cleanName.includes('telegram') || cleanName.includes('телеграм')) {
+                return `<svg viewBox="0 0 24 24" class="aether-card-svg" style="fill:#229ed9;"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm4.64 6.8c-.15 1.58-.8 5.42-1.13 7.19-.14.75-.42 1-.68 1.03-.58.05-1.02-.38-1.58-.75-.88-.58-1.38-.94-2.23-1.5-.99-.65-.35-1.01.22-1.59.15-.15 2.71-2.48 2.76-2.69a.2.2 0 00-.05-.18c-.06-.05-.14-.03-.21-.02-.09.02-1.49.95-4.22 2.79-.4.27-.76.41-1.08.4-.36-.01-1.04-.2-1.55-.37-.63-.2-1.12-.31-1.08-.66.02-.18.27-.36.75-.55 2.92-1.27 4.86-2.11 5.83-2.52 2.78-1.16 3.35-1.36 3.73-1.36.08 0 .27.02.39.12.1.08.13.19.14.27-.01.06.01.24 0 .34z"/></svg>`;
+            }
+            if (cleanUrl.includes('github.com') || cleanName.includes('github')) {
+                return `<svg viewBox="0 0 24 24" class="aether-card-svg" style="fill:#f8fafc;"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z"/></svg>`;
+            }
+            if (cleanUrl.includes('twitch.tv') || cleanName.includes('twitch')) {
+                return `<svg viewBox="0 0 24 24" class="aether-card-svg" style="fill:#a855f7;"><path d="M2.149 0L.537 4.119v16.836h5.731V24h3.224l3.045-3.045h4.657l6.269-6.269V0H2.149zm19.164 13.612l-3.582 3.582h-5.015L9.672 20.24v-3.045H5.194V2.149h16.119v11.463zm-9.313-7.522h2.149v6.09h-2.149v-6.09zm5.373 0h2.149v6.09h-2.149v-6.09z"/></svg>`;
+            }
+            if (cleanUrl.includes('kinopoisk.ru') || cleanName.includes('кинопоиск')) {
+                return `<svg viewBox="0 0 24 24" class="aether-card-svg" style="fill:#f97316;"><circle cx="12" cy="12" r="10" fill="#f97316"/><path d="M8 6h3v4.5l3.5-4.5h3.8l-4.5 5.5 4.8 6.5h-3.8l-3.8-5.3V18H8V6z" fill="#000"/></svg>`;
+            }
+
+            let domain = '';
+            try {
+                domain = new URL(url.startsWith('http') ? url : 'https://' + url).hostname.replace(/^www\./, '');
+            } catch (_) {
+                domain = cleanUrl.replace(/^https?:\/\//, '').replace(/^www\./, '').split('/')[0];
+            }
+            const letter = (name || 'S').trim().charAt(0).toUpperCase();
+            if (domain && domain.includes('.')) {
+                return `<img src="https://www.google.com/s2/favicons?domain=${encodeURIComponent(domain)}&sz=64" class="aether-card-favicon" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';" /><div class="aether-card-fallback-letter" style="display:none;">${letter}</div>`;
+            }
+            return `<div class="aether-card-fallback-letter">${letter}</div>`;
+        }
+
         function renderGrid() {
             const grid = document.getElementById('aether-grid');
             grid.innerHTML = '';
@@ -786,7 +898,7 @@ pub const START_PAGE_HTML: &str = r###"<!DOCTYPE html>
 
                 const icon = document.createElement('div');
                 icon.className = 'aether-card-icon';
-                icon.textContent = (card.name || 'S').trim().charAt(0).toUpperCase();
+                icon.innerHTML = getServiceIcon(card.name, card.url);
 
                 const name = document.createElement('div');
                 name.className = 'aether-card-name';
@@ -809,9 +921,75 @@ pub const START_PAGE_HTML: &str = r###"<!DOCTYPE html>
             });
         }
 
+        function renderModalPresets() {
+            const wrap = document.getElementById('aether-modal-presets-wrap');
+            if (!wrap) return;
+
+            // Считываем реестр посещений
+            let visitsMap = {};
+            try {
+                const storedVisits = localStorage.getItem('aether_site_visits');
+                if (storedVisits) visitsMap = JSON.parse(storedVisits);
+            } catch (_) {}
+
+            try {
+                if (window.name && window.name.startsWith("__AETHER_STATE__=")) {
+                    const parsed = JSON.parse(window.name.substring(17));
+                    if (parsed.visits) {
+                        for (const [k, v] of Object.entries(parsed.visits)) {
+                            visitsMap[k] = Math.max(visitsMap[k] || 0, v);
+                        }
+                    }
+                }
+            } catch (_) {}
+
+            // Проверяем историю
+            const historyList = getHistory();
+            historyList.forEach(item => {
+                if (item.visits && item.val && item.val.includes('.')) {
+                    let d = item.val.replace(/^https?:\/\//, '').replace(/^www\./, '').split('/')[0];
+                    visitsMap[d] = Math.max(visitsMap[d] || 0, item.visits);
+                }
+            });
+
+            // Сайты с 3+ визитами
+            const frequent = Object.entries(visitsMap)
+                .filter(([domain, count]) => count >= 3 && domain.includes('.'))
+                .sort((a, b) => b[1] - a[1])
+                .slice(0, 6);
+
+            let html = '';
+            if (frequent.length > 0) {
+                html += `<div style="font-size:11px; font-weight:600; color:#c084fc; margin-bottom:5px; display:flex; align-items:center; gap:5px;">
+                    <span>⭐</span> <span>Часто посещаемые сайты (3+ визитов):</span>
+                </div>
+                <div class="aether-presets" style="margin-bottom:12px;">`;
+                frequent.forEach(([domain, count]) => {
+                    let baseName = domain.split('.')[0];
+                    baseName = baseName.charAt(0).toUpperCase() + baseName.slice(1);
+                    const fullUrl = 'https://' + domain;
+                    html += `<span class="aether-preset-chip" style="border-color:rgba(192,132,252,0.6); background:rgba(168,85,247,0.22); color:#f3e8ff;" onclick="applyPreset('${baseName}', '${fullUrl}')">⭐ ${domain} (${count})</span>`;
+                });
+                html += `</div>`;
+            }
+
+            html += `<div style="font-size:11px; font-weight:600; color:#94a3b8; margin-bottom:5px;">Популярные сервисы:</div>
+            <div class="aether-presets">
+                <span class="aether-preset-chip" onclick="applyPreset('YouTube', 'https://www.youtube.com')">YouTube</span>
+                <span class="aether-preset-chip" onclick="applyPreset('ВКонтакте', 'https://vk.com')">ВКонтакте</span>
+                <span class="aether-preset-chip" onclick="applyPreset('Telegram', 'https://web.telegram.org')">Telegram</span>
+                <span class="aether-preset-chip" onclick="applyPreset('GitHub', 'https://github.com')">GitHub</span>
+                <span class="aether-preset-chip" onclick="applyPreset('Twitch', 'https://www.twitch.tv')">Twitch</span>
+                <span class="aether-preset-chip" onclick="applyPreset('Кинопоиск', 'https://www.kinopoisk.ru')">Кинопоиск</span>
+            </div>`;
+
+            wrap.innerHTML = html;
+        }
+
         function openAddModal() {
             document.getElementById('modal-name').value = '';
             document.getElementById('modal-url').value = '';
+            renderModalPresets();
             document.getElementById('aether-modal-backdrop').style.display = 'flex';
             document.getElementById('modal-name').focus();
         }
@@ -1212,6 +1390,15 @@ pub const AETHER_CORE_SCRIPT: &str = r###"
         const curUrl = window.location.href;
         const curTitle = (curUrl.includes("aether.localhost") || curUrl.includes("start.html")) ? "Старт" : (document.title || (location.hostname.replace("www.", "") || "Вкладка"));
 
+        // Учёт визитов на сайты для быстрых рекомендаций
+        if (!curUrl.includes("aether.localhost") && !curUrl.includes("start.html")) {
+            const domain = window.location.hostname.replace(/^www\./, '');
+            if (domain && domain.includes('.')) {
+                state.visits = state.visits || {};
+                state.visits[domain] = (state.visits[domain] || 0) + 1;
+            }
+        }
+
         if (!tab) {
             tab = { id: state.activeTabId, title: curTitle, url: curUrl };
             state.tabs.push(tab);
@@ -1230,6 +1417,20 @@ pub const AETHER_CORE_SCRIPT: &str = r###"
 
     // 3. ПЛАВАЮЩИЙ САЙДБАР ARC
     const SIDEBAR_CSS = `
+        #aether-progress-bar {
+            position: fixed !important;
+            top: 0 !important;
+            left: 0 !important;
+            width: 0% !important;
+            height: 3px !important;
+            background: linear-gradient(90deg, #9333ea, #a855f7, #38bdf8, #c084fc) !important;
+            box-shadow: 0 0 10px rgba(192, 132, 252, 0.8), 0 0 20px rgba(147, 51, 234, 0.5) !important;
+            z-index: 2147483647 !important;
+            pointer-events: none !important;
+            transition: width 0.25s cubic-bezier(0.1, 0.9, 0.2, 1), opacity 0.2s ease !important;
+            opacity: 0;
+        }
+
         #aether-trigger-pill {
             position: fixed !important;
             top: 10px !important;
@@ -1278,7 +1479,9 @@ pub const AETHER_CORE_SCRIPT: &str = r###"
             background: rgba(12, 7, 24, 0.96) !important;
             backdrop-filter: blur(24px) !important;
             border-right: 1px solid rgba(168, 85, 247, 0.35) !important;
-            box-shadow: 6px 0 32px rgba(0, 0, 0, 0.8), 0 0 20px rgba(168, 85, 247, 0.25) !important;
+            box-shadow: none !important;
+            visibility: hidden !important;
+            pointer-events: none !important;
             z-index: 2147483646 !important;
             display: flex !important;
             flex-direction: column !important;
@@ -1288,10 +1491,22 @@ pub const AETHER_CORE_SCRIPT: &str = r###"
             user-select: none !important;
             color: #f8fafc !important;
             transform: translateX(-100%) !important;
-            transition: transform 0.22s cubic-bezier(0.16, 1, 0.3, 1) !important;
+            transition: transform 0.22s cubic-bezier(0.16, 1, 0.3, 1), visibility 0.22s !important;
         }
         #aether-arc-sidebar.open {
             transform: translateX(0) !important;
+            visibility: visible !important;
+            pointer-events: auto !important;
+            box-shadow: 4px 0 16px rgba(0, 0, 0, 0.35) !important;
+        }
+
+        :fullscreen #aether-trigger-pill,
+        :-webkit-full-screen #aether-trigger-pill,
+        :fullscreen #aether-hover-edge,
+        :-webkit-full-screen #aether-hover-edge,
+        :fullscreen #aether-arc-sidebar,
+        :-webkit-full-screen #aether-arc-sidebar {
+            display: none !important;
         }
 
         .aether-sb-header {
@@ -1856,9 +2071,61 @@ pub const AETHER_CORE_SCRIPT: &str = r###"
         }
     }
 
+    // Нейро-индикатор мгновенной загрузки страницы
+    function triggerLoadProgress() {
+        let bar = document.getElementById('aether-progress-bar');
+        if (!bar) {
+            bar = document.createElement('div');
+            bar.id = 'aether-progress-bar';
+            document.documentElement.appendChild(bar);
+        }
+        bar.style.opacity = '1';
+        bar.style.width = '35%';
+        setTimeout(() => {
+            if (bar && bar.style.opacity === '1') bar.style.width = '75%';
+        }, 120);
+    }
+
+    function completeLoadProgress() {
+        const bar = document.getElementById('aether-progress-bar');
+        if (bar) {
+            bar.style.width = '100%';
+            setTimeout(() => {
+                bar.style.opacity = '0';
+                setTimeout(() => { bar.style.width = '0%'; }, 200);
+            }, 150);
+        }
+    }
+
+    // Обработка полноэкранного режима HTML5 видео и скрытия панели задач Windows
+    function handleFullscreenChange() {
+        const isFs = !!(document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement || document.msFullscreenElement);
+        const pill = document.getElementById('aether-trigger-pill');
+        const edge = document.getElementById('aether-hover-edge');
+        const sb = document.getElementById('aether-arc-sidebar');
+        if (isFs) {
+            if (pill) pill.style.display = 'none';
+            if (edge) edge.style.display = 'none';
+            if (sb) { sb.style.display = 'none'; sb.classList.remove('open'); }
+        } else {
+            if (pill) pill.style.display = 'flex';
+            if (edge) edge.style.display = 'block';
+            if (sb) sb.style.display = 'flex';
+        }
+        if (window.ipc && window.ipc.postMessage) {
+            try {
+                window.ipc.postMessage("set_fullscreen:" + (isFs ? "true" : "false"));
+            } catch (_) {}
+        }
+    }
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
+    document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
+    document.addEventListener('mozfullscreenchange', handleFullscreenChange);
+
     // 6. НАВИГАЦИЯ, ВКЛАДКИ И ПЕРЕХОД ДОМОЙ
     function goHome() {
         logToRust("goHome() вызван. Текущий адрес: " + window.location.href);
+        triggerLoadProgress();
         const state = getTabsState();
         const startTab = state.tabs.find(t => t.url && (t.url.includes("aether.localhost") || t.url.includes("start.html")));
         if (startTab) {
@@ -1884,6 +2151,7 @@ pub const AETHER_CORE_SCRIPT: &str = r###"
     }
 
     function createNewTab(url) {
+        triggerLoadProgress();
         const state = getTabsState();
         const targetUrl = url || getStartPageUrl();
         const newId = state.nextTabId;
@@ -1906,7 +2174,51 @@ pub const AETHER_CORE_SCRIPT: &str = r###"
         window.location.href = targetUrl;
     }
 
+    // Экспорт в глобальную область для Rust
+    window.createNewTab = createNewTab;
+
+    // Перехват клика колёсиком мыши (auxclick, button=1) для открытия в новой вкладке
+    document.addEventListener('auxclick', (e) => {
+        if (e.button === 1) {
+            const anchor = e.target.closest('a[href]');
+            if (anchor && anchor.href && !anchor.href.startsWith('javascript:')) {
+                e.preventDefault();
+                e.stopPropagation();
+                logToRust("Клик колесиком по ссылке: " + anchor.href);
+                triggerLoadProgress();
+                createNewTab(anchor.href);
+            }
+        }
+    }, true);
+
+    // Перехват ссылок target="_blank"
+    document.addEventListener('click', (e) => {
+        if (e.button === 0) {
+            const anchor = e.target.closest('a[href]');
+            if (anchor && anchor.target === '_blank' && anchor.href && !anchor.href.startsWith('javascript:')) {
+                e.preventDefault();
+                e.stopPropagation();
+                logToRust("target=_blank перехвачен: " + anchor.href);
+                triggerLoadProgress();
+                createNewTab(anchor.href);
+            }
+        }
+    }, true);
+
+    // Перехват window.open
+    const _origWindowOpen = window.open;
+    window.open = function(url) {
+        if (url && typeof url === 'string') {
+            logToRust("window.open перехвачен: " + url);
+            triggerLoadProgress();
+            createNewTab(url);
+            return window;
+        }
+        return _origWindowOpen.apply(this, arguments);
+    };
+
     function switchTab(id) {
+        triggerLoadProgress();
         const state = getTabsState();
         const tab = state.tabs.find(t => t.id === id);
         if (tab && tab.url) {
@@ -1962,6 +2274,7 @@ pub const AETHER_CORE_SCRIPT: &str = r###"
     }
 
     function openService(url) {
+        triggerLoadProgress();
         const state = getTabsState();
         const domain = url.replace("https://", "").replace("http://", "").replace("www.", "").split('/')[0];
         const existing = state.tabs.find(t => t.url && t.url.includes(domain));
@@ -1977,6 +2290,7 @@ pub const AETHER_CORE_SCRIPT: &str = r###"
     }
 
     function navigateToUrl(url) {
+        triggerLoadProgress();
         const state = getTabsState();
         let tab = state.tabs.find(t => t.id === state.activeTabId);
         if (tab) {
@@ -2112,14 +2426,22 @@ pub const AETHER_CORE_SCRIPT: &str = r###"
     });
 
     if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', renderSidebar);
+        document.addEventListener('DOMContentLoaded', () => {
+            renderSidebar();
+            completeLoadProgress();
+        });
     } else {
         renderSidebar();
+        completeLoadProgress();
     }
-    window.addEventListener('load', renderSidebar);
+    window.addEventListener('load', () => {
+        renderSidebar();
+        completeLoadProgress();
+    });
     window.addEventListener('yt-navigate-finish', () => {
         updateCurrentTabInfo();
         renderSidebar();
+        completeLoadProgress();
     });
     window.addEventListener('popstate', () => {
         updateCurrentTabInfo();
