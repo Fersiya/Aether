@@ -7,7 +7,7 @@
 //! - YouTube AdBlock (16x skip + авто-клик)
 //! - Медиа-контроль: PiP, режим "Только аудио", скачивание через yt-dlp
 
-pub const AETHER_CORE_SCRIPT: &str = r#"
+pub const AETHER_CORE_SCRIPT: &str = r###"
 (() => {
     if (window.__AETHER_INJECTED__) return;
     window.__AETHER_INJECTED__ = true;
@@ -915,4 +915,4 @@ pub const AETHER_CORE_SCRIPT: &str = r#"
         init();
     }
 })();
-"#;
+"###;
