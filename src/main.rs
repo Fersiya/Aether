@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use tao::{
     event::{Event, StartCause, WindowEvent},
     event_loop::{ControlFlow, EventLoop},
-    window::WindowBuilder,
+    window::{Theme, WindowBuilder},
 };
 use wry::{WebContext, WebViewBuilder};
 
@@ -17,10 +17,11 @@ const DEFAULT_HOME_URL: &str = "https://www.google.com";
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let event_loop = EventLoop::new();
 
-    // 1. Создаем нативное окно через Tao
+    // 1. Создаем нативное окно через Tao с глубокой тёмной темой Windows
     let window = WindowBuilder::new()
-        .with_title(format!("{} v0.5.1 — Легкий медиа-браузер", APP_NAME))
+        .with_title(format!("{} v0.5.2 — Легкий медиа-браузер", APP_NAME))
         .with_inner_size(tao::dpi::LogicalSize::new(1440.0, 900.0))
+        .with_theme(Some(Theme::Dark))
         .build(&event_loop)?;
 
     // 2. Настраиваем хранилище профиля для сохранения всех сессий и куки
@@ -49,7 +50,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         match event {
             Event::NewEvents(StartCause::Init) => {
-                println!("[Aether v0.5.1] Запущен успешно!");
+                println!("[Aether v0.5.2] Запущен успешно!");
                 println!("  F6 / Ctrl+L: поиск в Google / ввод адреса (HUD Omnibox)");
                 println!("  Ctrl+Space:  пауза/плей (YouTube / ВК)");
                 println!("  Ctrl+P:      режим Picture-in-Picture");
