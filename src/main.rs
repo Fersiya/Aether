@@ -20,7 +20,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // 1. Создаем нативное окно через Tao с глубокой тёмной темой
     let window = WindowBuilder::new()
-        .with_title(format!("{} v0.5.4 — Легкий медиа-браузер", APP_NAME))
+        .with_title(format!("{} v0.5.5 — Легкий медиа-браузер", APP_NAME))
         .with_inner_size(tao::dpi::LogicalSize::new(1440.0, 900.0))
         .with_theme(Some(Theme::Dark))
         .build(&event_loop)?;
@@ -81,7 +81,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         match event {
             Event::NewEvents(StartCause::Init) => {
-                println!("[Aether v0.5.4] Запущен успешно!");
+                println!("[Aether v0.5.5] Запущен успешно!");
                 println!("  Стартовая страница: {}", start_url);
                 println!("  F6 / Ctrl+L: поиск / омнибокс");
                 println!("  Ctrl+T:      новая вкладка (Aether Start)");
@@ -91,7 +91,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 println!("  Ctrl+P:      режим Picture-in-Picture");
                 println!("  Ctrl+M:      режим 'Только аудио'");
                 println!("  Ctrl+D:      скачать медиа / yt-dlp");
-                println!("  Ctrl+1..9:   быстрые сервисы");
             }
             Event::WindowEvent {
                 event: WindowEvent::CloseRequested,
