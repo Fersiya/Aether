@@ -2,7 +2,7 @@
 
 mod scripts;
 
-use directories::ProjectDirs;
+use directories::{ProjectDirs, UserDirs};
 use std::path::PathBuf;
 use tao::{
     event::{Event, StartCause, WindowEvent},
@@ -14,13 +14,35 @@ use tao::platform::windows::WindowExtWindows;
 use wry::{http::Request, WebContext, WebViewBuilder};
 
 const APP_NAME: &str = "Aether";
-const START_URL: &str = "aether://localhost/start.html";
+const START_URL: &str = "http://aether.localhost/";
 
 #[derive(Debug, Clone)]
 enum UserEvent {
     GoHome,
     Navigate(String),
     SaveCards(String),
+}
+
+fn get_desktop_log_path() -> PathBuf {
+    if let Some(user_dirs) = UserDirs::new() {
+        if let Some(desktop) = user_dirs.desktop_dir() {
+            return desktop.join("aether_debug.log");
+        }
+    }
+    PathBuf::from("aether_debug.log")
+}
+
+pub fn log_desktop(msg: &str) {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let line = format!("[time: {}] {}\r\n", now, msg);
+    eprintln!("{}", line.trim());
+    if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(get_desktop_log_path()) {
+        use std::io::Write;
+        let _ = file.write_all(line.as_bytes());
+    }
 }
 
 fn show_error_dialog(title: &str, message: &str) {
@@ -38,12 +60,14 @@ fn show_error_dialog(title: &str, message: &str) {
 }
 
 fn run_app() -> Result<(), Box<dyn std::error::Error>> {
+    log_desktop("=== Aether Browser v0.6.4: Запуск приложения ===");
+
     let event_loop = EventLoopBuilder::<UserEvent>::with_user_event().build();
     let proxy = event_loop.create_proxy();
 
     // 1. Создаем нативное окно через Tao с глубокой тёмной темой
     let window = WindowBuilder::new()
-        .with_title(format!("{} v0.6.3 — Легкий медиа-браузер", APP_NAME))
+        .with_title(format!("{} v0.6.4 — Легкий медиа-браузер", APP_NAME))
         .with_inner_size(tao::dpi::LogicalSize::new(1440.0, 900.0))
         .with_theme(Some(Theme::Dark))
         .build(&event_loop)?;
@@ -81,9 +105,9 @@ fn run_app() -> Result<(), Box<dyn std::error::Error>> {
         dir
     };
 
-    println!("[Aether] Каталог профиля: {:?}", profile_dir);
+    log_desktop(&format!("Profile dir: {:?}", profile_dir));
 
-    // 2.1 Загружаем сохраненные пользовательские карточки (по умолчанию пустой список)
+    // 2.1 Загружаем сохраненные пользовательские карточки
     let cards_json_path = profile_dir.join("cards.json");
     let saved_cards = if cards_json_path.exists() {
         std::fs::read_to_string(&cards_json_path).unwrap_or_else(|_| "[]".to_string())
@@ -94,7 +118,7 @@ fn run_app() -> Result<(), Box<dyn std::error::Error>> {
     let mut web_context = WebContext::new(Some(profile_dir));
     let core_script = scripts::get_core_script(START_URL, &saved_cards);
 
-    // 3. Инициализируем рендерер Wry с кастомным протоколом aether:// и IPC
+    // 3. Инициализируем рендерер Wry с протоколом aether и IPC
     let ipc_proxy = proxy.clone();
     let cards_file_ipc = cards_json_path.clone();
 
@@ -113,16 +137,23 @@ fn run_app() -> Result<(), Box<dyn std::error::Error>> {
         .with_ipc_handler(move |req: Request<String>| {
             let body = req.body().trim();
             if body == "go_home" {
+                log_desktop("IPC handler received: go_home");
                 ipc_proxy.send_event(UserEvent::GoHome).ok();
             } else if let Some(url) = body.strip_prefix("navigate:") {
+                log_desktop(&format!("IPC handler received: navigate to {}", url));
                 ipc_proxy.send_event(UserEvent::Navigate(url.to_string())).ok();
             } else if let Some(json) = body.strip_prefix("save_cards:") {
+                log_desktop("IPC handler received: save_cards");
                 let _ = std::fs::write(&cards_file_ipc, json);
                 ipc_proxy.send_event(UserEvent::SaveCards(json.to_string())).ok();
+            } else if let Some(log_msg) = body.strip_prefix("log:") {
+                log_desktop(&format!("[JS] {}", log_msg));
             }
         })
         .with_url(START_URL)
         .build(&window)?;
+
+    log_desktop(&format!("WebView2 инициализирован. Загружен START_URL: {}", START_URL));
 
     // 4. Главный цикл событий
     event_loop.run(move |event, _, control_flow| {
@@ -130,24 +161,21 @@ fn run_app() -> Result<(), Box<dyn std::error::Error>> {
 
         match event {
             Event::NewEvents(StartCause::Init) => {
-                println!("[Aether v0.6.3] Запущен успешно в стиле Arc!");
-                println!("  Стартовая страница: {}", START_URL);
-                println!("  Ctrl+B:      свернуть/развернуть боковой сайдбар");
-                println!("  Ctrl+H:      перейти домой");
-                println!("  Ctrl+T:      новая вкладка");
-                println!("  Ctrl+W:      закрыть вкладку");
-                println!("  F6 / Ctrl+L: поиск / омнибокс");
+                log_desktop("[Aether v0.6.4] Готов к работе!");
             }
             Event::WindowEvent {
                 event: WindowEvent::CloseRequested,
                 ..
             } => {
+                log_desktop("Окно закрыто пользователем. Завершение работы.");
                 *control_flow = ControlFlow::Exit;
             }
             Event::UserEvent(user_event) => {
                 match user_event {
                     UserEvent::GoHome => {
-                        webview.load_url(START_URL).ok();
+                        log_desktop("UserEvent::GoHome -> webview.load_url(http://aether.localhost/)");
+                        let res = webview.load_url(START_URL);
+                        log_desktop(&format!("load_url результат: {:?}", res));
                     }
                     UserEvent::Navigate(target_url) => {
                         let valid_url = if target_url.starts_with("http://") || target_url.starts_with("https://") || target_url.starts_with("aether://") {
@@ -155,7 +183,9 @@ fn run_app() -> Result<(), Box<dyn std::error::Error>> {
                         } else {
                             format!("https://{}", target_url)
                         };
-                        webview.load_url(&valid_url).ok();
+                        log_desktop(&format!("UserEvent::Navigate -> webview.load_url({})", valid_url));
+                        let res = webview.load_url(&valid_url);
+                        log_desktop(&format!("load_url результат: {:?}", res));
                     }
                     UserEvent::SaveCards(_) => {}
                 }
@@ -169,6 +199,7 @@ fn main() {
     std::panic::set_hook(Box::new(|info| {
         let msg = format!("Критическая ошибка Aether Browser:\n{}\n", info);
         eprintln!("{}", msg);
+        log_desktop(&format!("CRITICAL PANIC:\n{}", info));
         if let Some(proj_dirs) = ProjectDirs::from("com", "aether", "AetherBrowser") {
             let crash_file = proj_dirs.data_dir().join("crash.log");
             let _ = std::fs::write(&crash_file, &msg);
@@ -179,10 +210,7 @@ fn main() {
     if let Err(e) = run_app() {
         let msg = format!("Ошибка работы браузера: {:?}\n", e);
         eprintln!("{}", msg);
-        if let Some(proj_dirs) = ProjectDirs::from("com", "aether", "AetherBrowser") {
-            let crash_file = proj_dirs.data_dir().join("crash.log");
-            let _ = std::fs::write(&crash_file, &msg);
-        }
+        log_desktop(&format!("App error: {:?}", e));
         show_error_dialog("Aether Browser — Ошибка", &msg);
     }
 }
