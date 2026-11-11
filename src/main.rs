@@ -6,14 +6,21 @@ use directories::ProjectDirs;
 use std::path::PathBuf;
 use tao::{
     event::{Event, StartCause, WindowEvent},
-    event_loop::{ControlFlow, EventLoop},
+    event_loop::{ControlFlow, EventLoopBuilder},
     window::{Theme, WindowBuilder},
 };
 #[cfg(target_os = "windows")]
 use tao::platform::windows::WindowExtWindows;
-use wry::{WebContext, WebViewBuilder};
+use wry::{http::Request, WebContext, WebViewBuilder};
 
 const APP_NAME: &str = "Aether";
+
+#[derive(Debug, Clone)]
+enum UserEvent {
+    GoHome,
+    Navigate(String),
+    SaveCards(String),
+}
 
 fn show_error_dialog(title: &str, message: &str) {
     #[cfg(target_os = "windows")]
@@ -30,11 +37,12 @@ fn show_error_dialog(title: &str, message: &str) {
 }
 
 fn run_app() -> Result<(), Box<dyn std::error::Error>> {
-    let event_loop = EventLoop::new();
+    let event_loop = EventLoopBuilder::<UserEvent>::with_user_event().build();
+    let proxy = event_loop.create_proxy();
 
     // 1. Создаем нативное окно через Tao с глубокой тёмной темой
     let window = WindowBuilder::new()
-        .with_title(format!("{} v0.6.1 — Легкий медиа-браузер", APP_NAME))
+        .with_title(format!("{} v0.6.2 — Легкий медиа-браузер", APP_NAME))
         .with_inner_size(tao::dpi::LogicalSize::new(1440.0, 900.0))
         .with_theme(Some(Theme::Dark))
         .build(&event_loop)?;
@@ -74,30 +82,53 @@ fn run_app() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("[Aether] Каталог профиля: {:?}", profile_dir);
 
-    // 2.1 Подготавливаем кастомную фиолетовую стартовую страницу Aether
+    // 2.1 Загружаем сохраненные пользовательские карточки (по умолчанию пустой список)
+    let cards_json_path = profile_dir.join("cards.json");
+    let saved_cards = if cards_json_path.exists() {
+        std::fs::read_to_string(&cards_json_path).unwrap_or_else(|_| "[]".to_string())
+    } else {
+        "[]".to_string()
+    };
+
+    // 2.2 Подготавливаем кастомную фиолетовую стартовую страницу Aether
     let start_html_path = profile_dir.join("start.html");
     std::fs::write(&start_html_path, scripts::START_PAGE_HTML).ok();
     let start_url = format!("file:///{}", start_html_path.to_string_lossy().replace('\\', "/"));
 
     let mut web_context = WebContext::new(Some(profile_dir));
-    let core_script = scripts::get_core_script(&start_url);
+    let core_script = scripts::get_core_script(&start_url, &saved_cards);
 
-    // 3. Инициализируем рендерер Wry с переданным контекстом
-    let _webview = WebViewBuilder::with_web_context(&mut web_context)
+    // 3. Инициализируем рендерер Wry с переданным контекстом и IPC-обработчиком
+    let ipc_proxy = proxy.clone();
+    let cards_file_ipc = cards_json_path.clone();
+
+    let webview = WebViewBuilder::with_web_context(&mut web_context)
         .with_clipboard(true)
         .with_devtools(true)
         .with_initialization_script(&core_script)
+        .with_ipc_handler(move |req: Request<String>| {
+            let body = req.body().trim();
+            if body == "go_home" {
+                ipc_proxy.send_event(UserEvent::GoHome).ok();
+            } else if let Some(url) = body.strip_prefix("navigate:") {
+                ipc_proxy.send_event(UserEvent::Navigate(url.to_string())).ok();
+            } else if let Some(json) = body.strip_prefix("save_cards:") {
+                let _ = std::fs::write(&cards_file_ipc, json);
+                ipc_proxy.send_event(UserEvent::SaveCards(json.to_string())).ok();
+            }
+        })
         .with_url(&start_url)
         .build(&window)?;
 
     // 4. Главный цикл событий
+    let start_url_clone = start_url.clone();
     event_loop.run(move |event, _, control_flow| {
         *control_flow = ControlFlow::Wait;
 
         match event {
             Event::NewEvents(StartCause::Init) => {
-                println!("[Aether v0.6.1] Запущен успешно в стиле Arc!");
-                println!("  Стартовая страница: {}", start_url);
+                println!("[Aether v0.6.2] Запущен успешно в стиле Arc!");
+                println!("  Стартовая страница: {}", start_url_clone);
                 println!("  Ctrl+B:      свернуть/развернуть боковой сайдбар");
                 println!("  Ctrl+T:      новая вкладка");
                 println!("  Ctrl+W:      закрыть вкладку");
@@ -108,6 +139,17 @@ fn run_app() -> Result<(), Box<dyn std::error::Error>> {
                 ..
             } => {
                 *control_flow = ControlFlow::Exit;
+            }
+            Event::UserEvent(user_event) => {
+                match user_event {
+                    UserEvent::GoHome => {
+                        webview.load_url(&start_url_clone).ok();
+                    }
+                    UserEvent::Navigate(target_url) => {
+                        webview.load_url(&target_url).ok();
+                    }
+                    UserEvent::SaveCards(_) => {}
+                }
             }
             _ => (),
         }
