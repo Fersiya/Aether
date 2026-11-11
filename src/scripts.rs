@@ -1,4 +1,4 @@
-//! Встроенный рантайм Aether Browser v0.5.6:
+//! Встроенный рантайм Aether Browser v0.5.7:
 //! - Вариант Б: Компактный, сбалансированный Dynamic Island без визуального дублирования
 //! - Вкладки СПРАВА с сохранением состояния через window.name (работает на YouTube и всех сайтах!)
 //! - Векторная иконка Домой (SVG) вместо пиксельного эмодзи
@@ -316,6 +316,14 @@ pub const START_PAGE_HTML: &str = r###"<!DOCTYPE html>
 </html>
 "###;
 
+pub fn get_core_script(start_url: &str) -> String {
+    format!(
+        "window.__AETHER_GLOBAL_START_URL__ = {:?};\n{}",
+        start_url,
+        AETHER_CORE_SCRIPT
+    )
+}
+
 pub const AETHER_CORE_SCRIPT: &str = r###"
 (() => {
     // 1. Запуск строго в верхнем окне (защита от iframe рекламы)
@@ -328,12 +336,74 @@ pub const AETHER_CORE_SCRIPT: &str = r###"
     if (window.__AETHER_CORE_ATTACHED__) return;
     window.__AETHER_CORE_ATTACHED__ = true;
 
-    console.log("⚡ Aether Engine v0.5.6: Ядро управления запущено на", window.location.href);
+    console.log("⚡ Aether Engine v0.5.7: Ядро управления запущено на", window.location.href);
 
     // ==========================================
-    // 2. МЕЖДОМЕННОЕ ХРАНИЛИЩЕ ВКЛАДОК (WINDOW.NAME)
+    // 2. TRUSTED TYPES & ОБХОД СТРОГОГО CSP (YOUTUBE / GOOGLE / GITHUB)
     // ==========================================
-    // window.name сохраняется при переходе между ЛЮБЫМИ доменами (start.html -> youtube.com -> vk.com)
+    // YouTube использует 'require-trusted-types-for script'. Прямое присвоение innerHTML падает с TypeError.
+    // Решение: создаем доверенную политику 'default' и 'aether-trusted-policy' при старте документа.
+    let aetherPolicy = {
+        createHTML: (s) => s,
+        createScript: (s) => s,
+        createScriptURL: (s) => s
+    };
+
+    try {
+        if (window.trustedTypes && typeof window.trustedTypes.createPolicy === 'function') {
+            try {
+                window.trustedTypes.createPolicy('default', {
+                    createHTML: (s) => s,
+                    createScript: (s) => s,
+                    createScriptURL: (s) => s
+                });
+            } catch (_) {}
+            try {
+                aetherPolicy = window.trustedTypes.createPolicy('aether-trusted-policy', {
+                    createHTML: (s) => s,
+                    createScript: (s) => s,
+                    createScriptURL: (s) => s
+                });
+            } catch (_) {}
+        }
+    } catch (_) {}
+
+    function safeSetHTML(element, htmlString) {
+        if (!element) return;
+        try {
+            if (aetherPolicy && typeof aetherPolicy.createHTML === 'function') {
+                element.innerHTML = aetherPolicy.createHTML(htmlString);
+                return;
+            }
+        } catch (_) {}
+        try {
+            element.innerHTML = htmlString;
+            return;
+        } catch (_) {}
+        try {
+            const parser = new DOMParser();
+            const doc = parser.parseFromString(htmlString, 'text/html');
+            while (element.firstChild) element.removeChild(element.firstChild);
+            while (doc.body && doc.body.firstChild) {
+                element.appendChild(doc.body.firstChild);
+            }
+        } catch (_) {}
+    }
+
+    function getStartPageUrl() {
+        if (window.__AETHER_GLOBAL_START_URL__) {
+            return window.__AETHER_GLOBAL_START_URL__;
+        }
+        const state = getTabsState();
+        const found = state.tabs.find(t => t.url && t.url.includes("start.html"));
+        if (found) return found.url;
+        return "https://www.google.com";
+    }
+
+    // ==========================================
+    // 3. МЕЖДОМЕННОЕ ХРАНИЛИЩЕ ВКЛАДОК (WINDOW.NAME)
+    // ==========================================
+    // window.name сохраняется при навигации между ЛЮБЫМИ доменами (start.html -> youtube.com -> vk.com)
     function getTabsState() {
         try {
             if (window.name && window.name.startsWith("__AETHER_TABS__:")) {
@@ -361,286 +431,352 @@ pub const AETHER_CORE_SCRIPT: &str = r###"
     }
 
     function updateCurrentTabInfo() {
-        const state = getTabsState();
-        if (state.tabs && state.tabs[state.activeIndex]) {
-            const isStart = window.location.href.includes("start.html");
-            const title = isStart ? "Старт" : (document.title || window.location.hostname || "Сайт");
-            state.tabs[state.activeIndex].title = title.substring(0, 16);
-            state.tabs[state.activeIndex].url = window.location.href;
-            saveTabsState(state);
-            renderTabs();
+        try {
+            const state = getTabsState();
+            if (state.tabs && state.tabs[state.activeIndex]) {
+                const isStart = window.location.href.includes("start.html");
+                let title = isStart ? "Старт" : (document.title || window.location.hostname || "Сайт");
+                if (title.length > 16) title = title.substring(0, 15) + "…";
+                state.tabs[state.activeIndex].title = title;
+                state.tabs[state.activeIndex].url = window.location.href;
+                saveTabsState(state);
+                renderTabs();
+            }
+
+            const urlTextEl = document.getElementById("aether-url-text");
+            if (urlTextEl) {
+                const isStart = window.location.href.includes("start.html");
+                urlTextEl.textContent = isStart ? "Aether Home" : (window.location.hostname || "Веб");
+            }
+        } catch (e) {
+            console.error("[Aether] updateCurrentTabInfo error:", e);
         }
     }
 
-    function createNewTab() {
-        const state = getTabsState();
-        // Ищем стартовую страницу среди существующих или берем google
-        let startUrl = "https://www.google.com";
-        const startTab = state.tabs.find(t => t.url.includes("start.html"));
-        if (startTab) startUrl = startTab.url;
+    function createNewTab(customUrl) {
+        try {
+            const state = getTabsState();
+            const targetUrl = customUrl || getStartPageUrl();
 
-        const newTab = {
-            id: "tab_" + Date.now(),
-            title: "Старт",
-            url: startUrl,
-            active: true
-        };
-        state.tabs.forEach(t => t.active = false);
-        state.tabs.push(newTab);
-        state.activeIndex = state.tabs.length - 1;
-        saveTabsState(state);
+            const newTab = {
+                id: "tab_" + Date.now(),
+                title: targetUrl.includes("start.html") ? "Старт" : "Новая вкладка",
+                url: targetUrl,
+                active: true
+            };
+            state.tabs.forEach(t => t.active = false);
+            state.tabs.push(newTab);
+            state.activeIndex = state.tabs.length - 1;
+            saveTabsState(state);
 
-        window.location.href = startUrl;
+            window.location.href = targetUrl;
+        } catch (e) {
+            console.error("[Aether] createNewTab error:", e);
+        }
     }
 
     function closeTab(index) {
-        const state = getTabsState();
-        if (state.tabs.length <= 1) {
-            showToast("Это единственная вкладка", "ℹ️");
-            return;
-        }
+        try {
+            const state = getTabsState();
+            if (state.tabs.length <= 1) {
+                showToast("Это единственная вкладка", "ℹ️");
+                return;
+            }
 
-        const wasActive = state.activeIndex === index;
-        state.tabs.splice(index, 1);
+            const wasActive = state.activeIndex === index;
+            state.tabs.splice(index, 1);
 
-        if (state.activeIndex >= state.tabs.length) {
-            state.activeIndex = state.tabs.length - 1;
-        }
+            if (state.activeIndex >= state.tabs.length) {
+                state.activeIndex = state.tabs.length - 1;
+            }
 
-        state.tabs.forEach((t, i) => t.active = (i === state.activeIndex));
-        saveTabsState(state);
+            state.tabs.forEach((t, i) => t.active = (i === state.activeIndex));
+            saveTabsState(state);
 
-        if (wasActive) {
-            window.location.href = state.tabs[state.activeIndex].url;
-        } else {
-            renderTabs();
+            if (wasActive) {
+                window.location.href = state.tabs[state.activeIndex].url;
+            } else {
+                renderTabs();
+            }
+        } catch (e) {
+            console.error("[Aether] closeTab error:", e);
         }
     }
 
     function switchToTab(index) {
-        const state = getTabsState();
-        if (index === state.activeIndex) return;
-        if (index >= 0 && index < state.tabs.length) {
-            state.activeIndex = index;
-            state.tabs.forEach((t, i) => t.active = (i === index));
-            saveTabsState(state);
-            window.location.href = state.tabs[index].url;
+        try {
+            const state = getTabsState();
+            if (index === state.activeIndex) return;
+            if (index >= 0 && index < state.tabs.length) {
+                state.activeIndex = index;
+                state.tabs.forEach((t, i) => t.active = (i === index));
+                saveTabsState(state);
+                window.location.href = state.tabs[index].url;
+            }
+        } catch (e) {
+            console.error("[Aether] switchToTab error:", e);
         }
     }
 
     // ==========================================
-    // 3. ОТРИСОВКА ВКЛАДОК (СПРАВА В ОСТРОВЕ)
+    // 4. ОТРИСОВКА ВКЛАДОК (СПРАВА В ОСТРОВЕ)
     // ==========================================
+    // Чистый DOM без innerHTML — 100% иммунитет к CSP и Trusted Types
     function renderTabs() {
-        const strip = document.getElementById("aether-tabs-strip");
-        if (!strip) return;
-        strip.innerHTML = "";
+        try {
+            const strip = document.getElementById("aether-tabs-strip");
+            if (!strip) return;
+            while (strip.firstChild) strip.removeChild(strip.firstChild);
 
-        const state = getTabsState();
-        state.tabs.forEach((tab, index) => {
-            const tabEl = document.createElement("div");
-            tabEl.className = "aether-tab-item" + (tab.active ? " aether-tab-active" : "");
-            
-            // Прямые inline стили для обхода CSP
-            tabEl.style.cssText = `
-                display: flex !important;
-                align-items: center !important;
-                gap: 6px !important;
-                background: ${tab.active ? "rgba(147, 51, 234, 0.4)" : "rgba(255, 255, 255, 0.06)"} !important;
-                border: 1px solid ${tab.active ? "rgba(192, 132, 252, 0.65)" : "rgba(255, 255, 255, 0.1)"} !important;
-                padding: 4px 10px !important;
-                border-radius: 9999px !important;
-                font-size: 12px !important;
-                color: ${tab.active ? "#ffffff" : "#cbd5e1"} !important;
-                cursor: pointer !important;
-                white-space: nowrap !important;
-                transition: all 0.15s ease !important;
-            `;
+            const state = getTabsState();
+            state.tabs.forEach((tab, index) => {
+                const tabEl = document.createElement("div");
+                tabEl.className = "aether-tab-item" + (tab.active ? " aether-tab-active" : "");
+                
+                // Прямые inline стили для обхода любых CSS ограничений
+                tabEl.style.cssText = `
+                    display: flex !important;
+                    align-items: center !important;
+                    gap: 6px !important;
+                    background: ${tab.active ? "rgba(147, 51, 234, 0.45)" : "rgba(255, 255, 255, 0.06)"} !important;
+                    border: 1px solid ${tab.active ? "rgba(192, 132, 252, 0.75)" : "rgba(255, 255, 255, 0.1)"} !important;
+                    padding: 4px 10px !important;
+                    border-radius: 9999px !important;
+                    font-size: 12px !important;
+                    color: ${tab.active ? "#ffffff" : "#cbd5e1"} !important;
+                    cursor: pointer !important;
+                    white-space: nowrap !important;
+                    transition: all 0.15s ease !important;
+                `;
 
-            tabEl.innerHTML = `
-                <span>${tab.title}</span>
-                <span class="aether-tab-close" style="margin-left: 2px; font-size: 13px; opacity: 0.7; padding: 0 3px; border-radius: 50%;">✕</span>
-            `;
+                const titleSpan = document.createElement("span");
+                titleSpan.textContent = tab.title;
+                tabEl.appendChild(titleSpan);
 
-            tabEl.addEventListener("click", (e) => {
-                if (e.target.classList.contains("aether-tab-close")) {
-                    e.stopPropagation();
-                    closeTab(index);
-                } else {
-                    switchToTab(index);
-                }
+                const closeSpan = document.createElement("span");
+                closeSpan.className = "aether-tab-close";
+                closeSpan.textContent = "✕";
+                closeSpan.style.cssText = "margin-left: 2px; font-size: 13px; opacity: 0.7; padding: 0 3px; border-radius: 50%; cursor: pointer;";
+                tabEl.appendChild(closeSpan);
+
+                tabEl.addEventListener("click", (e) => {
+                    if (e.target.classList.contains("aether-tab-close")) {
+                        e.stopPropagation();
+                        closeTab(index);
+                    } else {
+                        switchToTab(index);
+                    }
+                });
+
+                strip.appendChild(tabEl);
             });
-
-            strip.appendChild(tabEl);
-        });
+        } catch (e) {
+            console.error("[Aether] renderTabs error:", e);
+        }
     }
 
     // ==========================================
-    // 4. МОНТАЖ DYNAMIC ISLAND (ВАРИАНТ Б — КОМПАКТНЫЙ)
+    // 5. МОНТАЖ DYNAMIC ISLAND (ВАРИАНТ Б — КОМПАКТНЫЙ)
     // ==========================================
     function mountDynamicIsland() {
-        const target = document.body || document.documentElement;
-        if (!target) return;
-        if (document.getElementById("aether-island-root")) return;
+        try {
+            const target = document.documentElement || document.body;
+            if (!target) return;
+            if (document.getElementById("aether-island-root")) return;
 
-        const isStart = window.location.href.includes("start.html");
-        const domainText = isStart ? "Aether Home" : (window.location.hostname || "Веб");
+            const isStart = window.location.href.includes("start.html");
+            const domainText = isStart ? "Aether Home" : (window.location.hostname || "Веб");
 
-        const root = document.createElement("div");
-        root.id = "aether-island-root";
-        root.style.cssText = "position: fixed !important; top: 10px !important; left: 50% !important; transform: translateX(-50%) !important; z-index: 2147483647 !important; pointer-events: auto !important; user-select: none !important; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;";
+            const root = document.createElement("div");
+            root.id = "aether-island-root";
+            root.style.cssText = "position: fixed !important; top: 10px !important; left: 50% !important; transform: translateX(-50%) !important; z-index: 2147483647 !important; pointer-events: auto !important; user-select: none !important; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;";
 
-        // ВАРИАНТ Б: Чистый, не дублирующий текст дизайн
-        root.innerHTML = `
-            <div id="aether-island" style="
-                background: rgba(12, 7, 26, 0.94) !important;
-                backdrop-filter: blur(24px) saturate(180%) !important;
-                -webkit-backdrop-filter: blur(24px) saturate(180%) !important;
-                border: 1.5px solid rgba(168, 85, 247, 0.45) !important;
-                border-radius: 9999px !important;
-                padding: 4px 10px !important;
-                display: flex !important;
-                align-items: center !important;
-                gap: 6px !important;
-                box-shadow: 0 12px 35px rgba(0, 0, 0, 0.7), 0 0 25px rgba(168, 85, 247, 0.25) !important;
-            ">
-                <!-- 1. Навигация с векторным домиком (Home) -->
-                <button id="aether-nav-home" class="aether-icon-btn" title="Домашняя страница Aether" style="width: 28px; height: 28px; border-radius: 50%; background: rgba(255,255,255,0.06); border: none; display: flex; align-items: center; justify-content: center; color: #d8b4fe; cursor: pointer;">
-                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
-                </button>
-
-                <button id="aether-nav-back" class="aether-icon-btn" title="Назад (Alt + ←)" style="width: 28px; height: 28px; border-radius: 50%; background: rgba(255,255,255,0.06); border: none; display: flex; align-items: center; justify-content: center; color: #cbd5e1; cursor: pointer;">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
-                </button>
-
-                <button id="aether-nav-forward" class="aether-icon-btn" title="Вперед (Alt + →)" style="width: 28px; height: 28px; border-radius: 50%; background: rgba(255,255,255,0.06); border: none; display: flex; align-items: center; justify-content: center; color: #cbd5e1; cursor: pointer;">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
-                </button>
-
-                <button id="aether-nav-reload" class="aether-icon-btn" title="Обновить (F5)" style="width: 28px; height: 28px; border-radius: 50%; background: rgba(255,255,255,0.06); border: none; display: flex; align-items: center; justify-content: center; color: #cbd5e1; cursor: pointer;">
-                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg>
-                </button>
-
-                <!-- 2. Адресная строка (чистый домен, без дублирования со вкладкой) -->
-                <div id="aether-url-pill" title="Поиск или ввод адреса (Ctrl + L / F6)" style="
-                    display: flex; align-items: center; gap: 6px;
-                    background: rgba(26, 17, 48, 0.75); border: 1px solid rgba(168, 85, 247, 0.35);
-                    border-radius: 9999px; padding: 4px 12px; cursor: pointer; max-width: 180px;
+            safeSetHTML(root, `
+                <div id="aether-island" style="
+                    background: rgba(12, 7, 26, 0.94) !important;
+                    backdrop-filter: blur(24px) saturate(180%) !important;
+                    -webkit-backdrop-filter: blur(24px) saturate(180%) !important;
+                    border: 1.5px solid rgba(168, 85, 247, 0.45) !important;
+                    border-radius: 9999px !important;
+                    padding: 4px 10px !important;
+                    display: flex !important;
+                    align-items: center !important;
+                    gap: 6px !important;
+                    box-shadow: 0 12px 35px rgba(0, 0, 0, 0.7), 0 0 25px rgba(168, 85, 247, 0.25) !important;
                 ">
-                    <span style="font-size: 11px;">🔒</span>
-                    <span id="aether-url-text" style="font-size: 12.5px; font-weight: 500; color: #e2e8f0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${domainText}</span>
+                    <!-- 1. Навигация с векторным домиком (Home) -->
+                    <button id="aether-nav-home" class="aether-icon-btn" title="Домашняя страница Aether" style="width: 28px; height: 28px; border-radius: 50%; background: rgba(255,255,255,0.06); border: none; display: flex; align-items: center; justify-content: center; color: #d8b4fe; cursor: pointer;">
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+                    </button>
+
+                    <button id="aether-nav-back" class="aether-icon-btn" title="Назад (Alt + ←)" style="width: 28px; height: 28px; border-radius: 50%; background: rgba(255,255,255,0.06); border: none; display: flex; align-items: center; justify-content: center; color: #cbd5e1; cursor: pointer;">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+                    </button>
+
+                    <button id="aether-nav-forward" class="aether-icon-btn" title="Вперед (Alt + →)" style="width: 28px; height: 28px; border-radius: 50%; background: rgba(255,255,255,0.06); border: none; display: flex; align-items: center; justify-content: center; color: #cbd5e1; cursor: pointer;">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+                    </button>
+
+                    <button id="aether-nav-reload" class="aether-icon-btn" title="Обновить (F5)" style="width: 28px; height: 28px; border-radius: 50%; background: rgba(255,255,255,0.06); border: none; display: flex; align-items: center; justify-content: center; color: #cbd5e1; cursor: pointer;">
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg>
+                    </button>
+
+                    <!-- 2. Адресная строка (чистый домен, без дублирования со вкладкой) -->
+                    <div id="aether-url-pill" title="Поиск или ввод адреса (Ctrl + L / F6)" style="
+                        display: flex; align-items: center; gap: 6px;
+                        background: rgba(26, 17, 48, 0.75); border: 1px solid rgba(168, 85, 247, 0.35);
+                        border-radius: 9999px; padding: 4px 12px; cursor: pointer; max-width: 180px;
+                    ">
+                        <span style="font-size: 11px;">🔒</span>
+                        <span id="aether-url-text" style="font-size: 12.5px; font-weight: 500; color: #e2e8f0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${domainText}</span>
+                    </div>
+
+                    <div style="width: 1px; height: 18px; background: rgba(255,255,255,0.12); margin: 0 2px;"></div>
+
+                    <!-- 3. Медиа-кнопки и Настройки -->
+                    <button id="aether-tool-audio" class="aether-icon-btn" title="Режим 'Только аудио' (Ctrl + M) — разгрузка GPU" style="width: 28px; height: 28px; border-radius: 50%; background: rgba(255,255,255,0.06); border: none; display: flex; align-items: center; justify-content: center; color: #cbd5e1; cursor: pointer;">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M3 18v-6a9 9 0 0 1 18 0v6"/><path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3zM3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z"/></svg>
+                    </button>
+                    <button id="aether-tool-pip" class="aether-icon-btn" title="Картинка в картинке / PiP (Ctrl + P)" style="width: 28px; height: 28px; border-radius: 50%; background: rgba(255,255,255,0.06); border: none; display: flex; align-items: center; justify-content: center; color: #cbd5e1; cursor: pointer;">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><rect x="2" y="3" width="20" height="14" rx="2"/><rect x="12" y="9" width="8" height="6" rx="1"/></svg>
+                    </button>
+                    <button id="aether-tool-download" class="aether-icon-btn" title="Скачать медиа / yt-dlp (Ctrl + D)" style="width: 28px; height: 28px; border-radius: 50%; background: rgba(255,255,255,0.06); border: none; display: flex; align-items: center; justify-content: center; color: #cbd5e1; cursor: pointer;">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                    </button>
+                    <button id="aether-tool-settings" class="aether-icon-btn" title="Настройки Aether" style="width: 28px; height: 28px; border-radius: 50%; background: rgba(255,255,255,0.06); border: none; display: flex; align-items: center; justify-content: center; color: #c084fc; cursor: pointer;">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+                    </button>
+
+                    <div style="width: 1px; height: 18px; background: rgba(255,255,255,0.12); margin: 0 2px;"></div>
+
+                    <!-- 4. ВКЛАДКИ СПРАВА -->
+                    <div id="aether-tabs-strip" style="display: flex; align-items: center; gap: 5px; max-width: 440px; overflow-x: auto;"></div>
+                    <button id="aether-btn-new-tab" title="Новая вкладка (Ctrl + T)" style="
+                        width: 25px; height: 25px; border-radius: 50%;
+                        background: rgba(147, 51, 234, 0.3); border: 1px solid rgba(168, 85, 247, 0.45);
+                        color: #d8b4fe; font-size: 15px; display: flex; align-items: center; justify-content: center;
+                        cursor: pointer; padding: 0;
+                    ">+</button>
                 </div>
+            `);
 
-                <div style="width: 1px; height: 18px; background: rgba(255,255,255,0.12); margin: 0 2px;"></div>
+            target.appendChild(root);
 
-                <!-- 3. Медиа-кнопки и Настройки -->
-                <button id="aether-tool-audio" class="aether-icon-btn" title="Режим 'Только аудио' (Ctrl + M) — разгрузка GPU" style="width: 28px; height: 28px; border-radius: 50%; background: rgba(255,255,255,0.06); border: none; display: flex; align-items: center; justify-content: center; color: #cbd5e1; cursor: pointer;">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M3 18v-6a9 9 0 0 1 18 0v6"/><path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3zM3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z"/></svg>
-                </button>
-                <button id="aether-tool-pip" class="aether-icon-btn" title="Картинка в картинке / PiP (Ctrl + P)" style="width: 28px; height: 28px; border-radius: 50%; background: rgba(255,255,255,0.06); border: none; display: flex; align-items: center; justify-content: center; color: #cbd5e1; cursor: pointer;">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><rect x="2" y="3" width="20" height="14" rx="2"/><rect x="12" y="9" width="8" height="6" rx="1"/></svg>
-                </button>
-                <button id="aether-tool-download" class="aether-icon-btn" title="Скачать медиа / yt-dlp (Ctrl + D)" style="width: 28px; height: 28px; border-radius: 50%; background: rgba(255,255,255,0.06); border: none; display: flex; align-items: center; justify-content: center; color: #cbd5e1; cursor: pointer;">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-                </button>
-                <button id="aether-tool-settings" class="aether-icon-btn" title="Настройки Aether" style="width: 28px; height: 28px; border-radius: 50%; background: rgba(255,255,255,0.06); border: none; display: flex; align-items: center; justify-content: center; color: #c084fc; cursor: pointer;">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
-                </button>
+            const newTabBtn = document.getElementById("aether-btn-new-tab");
+            if (newTabBtn) newTabBtn.addEventListener("click", () => createNewTab());
 
-                <div style="width: 1px; height: 18px; background: rgba(255,255,255,0.12); margin: 0 2px;"></div>
+            const homeBtn = document.getElementById("aether-nav-home");
+            if (homeBtn) homeBtn.addEventListener("click", () => {
+                window.location.href = getStartPageUrl();
+            });
 
-                <!-- 4. ВКЛАДКИ СПРАВА -->
-                <div id="aether-tabs-strip" style="display: flex; align-items: center; gap: 5px; max-width: 440px; overflow-x: auto;"></div>
-                <button id="aether-btn-new-tab" title="Новая вкладка (Ctrl + T)" style="
-                    width: 25px; height: 25px; border-radius: 50%;
-                    background: rgba(147, 51, 234, 0.3); border: 1px solid rgba(168, 85, 247, 0.45);
-                    color: #d8b4fe; font-size: 15px; display: flex; align-items: center; justify-content: center;
-                    cursor: pointer; padding: 0;
-                ">+</button>
-            </div>
-        `;
+            const backBtn = document.getElementById("aether-nav-back");
+            if (backBtn) backBtn.addEventListener("click", () => window.history.back());
 
-        target.appendChild(root);
+            const fwdBtn = document.getElementById("aether-nav-forward");
+            if (fwdBtn) fwdBtn.addEventListener("click", () => window.history.forward());
 
-        document.getElementById("aether-btn-new-tab").addEventListener("click", createNewTab);
-        document.getElementById("aether-nav-home").addEventListener("click", createNewTab);
-        document.getElementById("aether-nav-back").addEventListener("click", () => window.history.back());
-        document.getElementById("aether-nav-forward").addEventListener("click", () => window.history.forward());
-        document.getElementById("aether-nav-reload").addEventListener("click", () => window.location.reload());
-        document.getElementById("aether-url-pill").addEventListener("click", openOmnibox);
+            const reloadBtn = document.getElementById("aether-nav-reload");
+            if (reloadBtn) reloadBtn.addEventListener("click", () => window.location.reload());
 
-        document.getElementById("aether-tool-audio").addEventListener("click", toggleAudioOnly);
-        document.getElementById("aether-tool-pip").addEventListener("click", togglePiP);
-        document.getElementById("aether-tool-download").addEventListener("click", downloadMedia);
-        document.getElementById("aether-tool-settings").addEventListener("click", openSettings);
+            const urlPill = document.getElementById("aether-url-pill");
+            if (urlPill) urlPill.addEventListener("click", openOmnibox);
 
-        renderTabs();
+            const audioBtn = document.getElementById("aether-tool-audio");
+            if (audioBtn) audioBtn.addEventListener("click", toggleAudioOnly);
+
+            const pipBtn = document.getElementById("aether-tool-pip");
+            if (pipBtn) pipBtn.addEventListener("click", togglePiP);
+
+            const dlBtn = document.getElementById("aether-tool-download");
+            if (dlBtn) dlBtn.addEventListener("click", downloadMedia);
+
+            const setBtn = document.getElementById("aether-tool-settings");
+            if (setBtn) setBtn.addEventListener("click", openSettings);
+
+            renderTabs();
+        } catch (e) {
+            console.error("[Aether] mountDynamicIsland error:", e);
+        }
     }
 
     function ensureIslandAttached() {
-        if (!document.getElementById("aether-island-root")) {
-            mountDynamicIsland();
+        try {
+            const target = document.documentElement || document.body;
+            if (!target) return;
+            const root = document.getElementById("aether-island-root");
+            if (!root) {
+                mountDynamicIsland();
+            } else if (!target.contains(root)) {
+                target.appendChild(root);
+            }
+        } catch (e) {
+            console.error("[Aether] ensureIslandAttached error:", e);
         }
     }
 
     // ==========================================
-    // 5. НАСТРОЙКИ (SETTINGS)
+    // 6. НАСТРОЙКИ (SETTINGS)
     // ==========================================
     let settingsOverlay = null;
 
     function openSettings() {
-        const target = document.body || document.documentElement;
-        if (!target) return;
+        try {
+            const target = document.documentElement || document.body;
+            if (!target) return;
 
-        if (!settingsOverlay) {
-            settingsOverlay = document.createElement("div");
-            settingsOverlay.id = "aether-settings-overlay";
-            settingsOverlay.style.cssText = "position: fixed !important; inset: 0 !important; z-index: 2147483646 !important; background: rgba(0,0,0,0.65) !important; backdrop-filter: blur(14px) !important; display: none; align-items: flex-start; justify-content: center; padding-top: 12vh; opacity: 0; transition: opacity 0.18s ease-out;";
+            if (!settingsOverlay) {
+                settingsOverlay = document.createElement("div");
+                settingsOverlay.id = "aether-settings-overlay";
+                settingsOverlay.style.cssText = "position: fixed !important; inset: 0 !important; z-index: 2147483646 !important; background: rgba(0,0,0,0.65) !important; backdrop-filter: blur(14px) !important; display: none; align-items: flex-start; justify-content: center; padding-top: 12vh; opacity: 0; transition: opacity 0.18s ease-out;";
 
-            settingsOverlay.innerHTML = `
-                <div style="width: 90%; max-width: 520px; background: #0d071a; border: 1.5px solid rgba(168,85,247,0.5); border-radius: 18px; padding: 22px 26px; box-shadow: 0 25px 60px rgba(0,0,0,0.8); color: #f8fafc; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;">
-                    <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; border-bottom: 1px solid rgba(168,85,247,0.25); padding-bottom: 12px;">
-                        <div style="font-size: 17px; font-weight: 600; color: #d8b4fe; display: flex; align-items: center; gap: 8px;">
-                            <span>⚙️</span> <span>Настройки Aether</span>
+                safeSetHTML(settingsOverlay, `
+                    <div style="width: 90%; max-width: 520px; background: #0d071a; border: 1.5px solid rgba(168,85,247,0.5); border-radius: 18px; padding: 22px 26px; box-shadow: 0 25px 60px rgba(0,0,0,0.8); color: #f8fafc; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;">
+                        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; border-bottom: 1px solid rgba(168,85,247,0.25); padding-bottom: 12px;">
+                            <div style="font-size: 17px; font-weight: 600; color: #d8b4fe; display: flex; align-items: center; gap: 8px;">
+                                <span>⚙️</span> <span>Настройки Aether</span>
+                            </div>
+                            <div id="aether-settings-close" style="font-size: 18px; color: #94a3b8; cursor: pointer; padding: 2px 6px;">✕</div>
                         </div>
-                        <div id="aether-settings-close" style="font-size: 18px; color: #94a3b8; cursor: pointer; padding: 2px 6px;">✕</div>
-                    </div>
 
-                    <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px;">
-                        <div>
-                            <div style="font-size: 14px; color: #cbd5e1;">Поисковая система</div>
-                            <div style="font-size: 11.5px; color: #94a3b8;">Используется в омнибоксе и на стартовой</div>
+                        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px;">
+                            <div>
+                                <div style="font-size: 14px; color: #cbd5e1;">Поисковая система</div>
+                                <div style="font-size: 11.5px; color: #94a3b8;">Используется в омнибоксе и на стартовой</div>
+                            </div>
+                            <select id="aether-set-search" style="background: rgba(30, 20, 56, 0.9); color: #fff; border: 1px solid rgba(168,85,247,0.4); border-radius: 8px; padding: 6px 10px; outline: none;">
+                                <option value="google">Google</option>
+                                <option value="yandex">Яндекс</option>
+                                <option value="duckduckgo">DuckDuckGo</option>
+                            </select>
                         </div>
-                        <select id="aether-set-search" style="background: rgba(30, 20, 56, 0.9); color: #fff; border: 1px solid rgba(168,85,247,0.4); border-radius: 8px; padding: 6px 10px; outline: none;">
-                            <option value="google">Google</option>
-                            <option value="yandex">Яндекс</option>
-                            <option value="duckduckgo">DuckDuckGo</option>
-                        </select>
+
+                        <div style="margin-top: 24px; padding-top: 14px; border-top: 1px solid rgba(255,255,255,0.08); display: flex; justify-content: space-between; align-items: center;">
+                            <span style="font-size: 12px; color: #64748b;">Aether Browser v0.5.7</span>
+                            <button id="aether-reset-tabs-btn" style="background: rgba(239,68,68,0.2); border: 1px solid rgba(239,68,68,0.4); color: #fca5a5; border-radius: 8px; padding: 6px 12px; font-size: 12px; cursor: pointer;">Сбросить вкладки</button>
+                        </div>
                     </div>
+                `);
 
-                    <div style="margin-top: 24px; padding-top: 14px; border-top: 1px solid rgba(255,255,255,0.08); display: flex; justify-content: space-between; align-items: center;">
-                        <span style="font-size: 12px; color: #64748b;">Aether Browser v0.5.6</span>
-                        <button id="aether-reset-tabs-btn" style="background: rgba(239,68,68,0.2); border: 1px solid rgba(239,68,68,0.4); color: #fca5a5; border-radius: 8px; padding: 6px 12px; font-size: 12px; cursor: pointer;">Сбросить вкладки</button>
-                    </div>
-                </div>
-            `;
+                target.appendChild(settingsOverlay);
 
-            target.appendChild(settingsOverlay);
+                document.getElementById("aether-settings-close").addEventListener("click", closeSettings);
+                settingsOverlay.addEventListener("click", (e) => {
+                    if (e.target === settingsOverlay) closeSettings();
+                });
 
-            document.getElementById("aether-settings-close").addEventListener("click", closeSettings);
-            settingsOverlay.addEventListener("click", (e) => {
-                if (e.target === settingsOverlay) closeSettings();
-            });
+                document.getElementById("aether-reset-tabs-btn").addEventListener("click", () => {
+                    window.name = "";
+                    showToast("Вкладки сброшены", "🔄");
+                    setTimeout(() => window.location.reload(), 500);
+                });
+            }
 
-            document.getElementById("aether-reset-tabs-btn").addEventListener("click", () => {
-                window.name = "";
-                showToast("Вкладки сброшены", "🔄");
-                setTimeout(() => window.location.reload(), 500);
-            });
+            settingsOverlay.style.display = "flex";
+            requestAnimationFrame(() => settingsOverlay.style.opacity = "1");
+        } catch (e) {
+            console.error("[Aether] openSettings error:", e);
         }
-
-        settingsOverlay.style.display = "flex";
-        requestAnimationFrame(() => settingsOverlay.style.opacity = "1");
     }
 
     function closeSettings() {
@@ -652,54 +788,58 @@ pub const AETHER_CORE_SCRIPT: &str = r###"
     window.__AETHER_OPEN_SETTINGS__ = openSettings;
 
     // ==========================================
-    // 6. HUD ОМНИБОКС
+    // 7. HUD ОМНИБОКС
     // ==========================================
     let omniboxOverlay = null;
 
     function openOmnibox() {
-        const target = document.body || document.documentElement;
-        if (!target) return;
+        try {
+            const target = document.documentElement || document.body;
+            if (!target) return;
 
-        if (!omniboxOverlay) {
-            omniboxOverlay = document.createElement("div");
-            omniboxOverlay.id = "aether-omnibox-overlay";
-            omniboxOverlay.style.cssText = "position: fixed !important; inset: 0 !important; z-index: 2147483646 !important; background: rgba(0,0,0,0.65) !important; backdrop-filter: blur(14px) !important; display: none; align-items: flex-start; justify-content: center; padding-top: 14vh; opacity: 0; transition: opacity 0.18s ease-out;";
+            if (!omniboxOverlay) {
+                omniboxOverlay = document.createElement("div");
+                omniboxOverlay.id = "aether-omnibox-overlay";
+                omniboxOverlay.style.cssText = "position: fixed !important; inset: 0 !important; z-index: 2147483646 !important; background: rgba(0,0,0,0.65) !important; backdrop-filter: blur(14px) !important; display: none; align-items: flex-start; justify-content: center; padding-top: 14vh; opacity: 0; transition: opacity 0.18s ease-out;";
 
-            omniboxOverlay.innerHTML = `
-                <div style="width: 90%; max-width: 640px; background: #0d071a; border: 1.5px solid rgba(168,85,247,0.5); border-radius: 16px; padding: 18px 22px; box-shadow: 0 25px 60px rgba(0,0,0,0.75);">
-                    <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px;">
-                        <div style="font-size: 15px; font-weight: 600; color: #d8b4fe;">🌌 Aether Omnibox</div>
-                        <div style="font-size: 11px; color: #94a3b8; background: rgba(255,255,255,0.08); padding: 3px 8px; border-radius: 6px;">Esc — закрыть</div>
+                safeSetHTML(omniboxOverlay, `
+                    <div style="width: 90%; max-width: 640px; background: #0d071a; border: 1.5px solid rgba(168,85,247,0.5); border-radius: 16px; padding: 18px 22px; box-shadow: 0 25px 60px rgba(0,0,0,0.75);">
+                        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px;">
+                            <div style="font-size: 15px; font-weight: 600; color: #d8b4fe;">🌌 Aether Omnibox</div>
+                            <div style="font-size: 11px; color: #94a3b8; background: rgba(255,255,255,0.08); padding: 3px 8px; border-radius: 6px;">Esc — закрыть</div>
+                        </div>
+                        <input id="aether-omnibox-input" style="width: 100%; box-sizing: border-box; background: rgba(30, 20, 56, 0.9); border: 1.5px solid rgba(168, 85, 247, 0.5); border-radius: 12px; padding: 13px 18px; font-size: 15.5px; color: #fff; outline: none;" type="text" autocomplete="off" spellcheck="false" placeholder="Адрес сайта, поисковый запрос или команда (yt:, vk:, gh:)..." />
                     </div>
-                    <input id="aether-omnibox-input" style="width: 100%; box-sizing: border-box; background: rgba(30, 20, 56, 0.9); border: 1.5px solid rgba(168, 85, 247, 0.5); border-radius: 12px; padding: 13px 18px; font-size: 15.5px; color: #fff; outline: none;" type="text" autocomplete="off" spellcheck="false" placeholder="Адрес сайта, поисковый запрос или команда (yt:, vk:, gh:)..." />
-                </div>
-            `;
-            target.appendChild(omniboxOverlay);
+                `);
+                target.appendChild(omniboxOverlay);
 
-            omniboxOverlay.addEventListener("click", (e) => {
-                if (e.target === omniboxOverlay) closeOmnibox();
-            });
+                omniboxOverlay.addEventListener("click", (e) => {
+                    if (e.target === omniboxOverlay) closeOmnibox();
+                });
+
+                const input = document.getElementById("aether-omnibox-input");
+                input.addEventListener("keydown", (e) => {
+                    e.stopPropagation();
+                    if (e.key === "Escape") closeOmnibox();
+                    else if (e.key === "Enter") {
+                        closeOmnibox();
+                        navigateTo(input.value);
+                    }
+                });
+            }
 
             const input = document.getElementById("aether-omnibox-input");
-            input.addEventListener("keydown", (e) => {
-                e.stopPropagation();
-                if (e.key === "Escape") closeOmnibox();
-                else if (e.key === "Enter") {
-                    closeOmnibox();
-                    navigateTo(input.value);
-                }
+            input.value = window.location.href.includes("start.html") ? "" : window.location.href;
+            omniboxOverlay.style.display = "flex";
+
+            requestAnimationFrame(() => {
+                omniboxOverlay.style.opacity = "1";
+                input.focus();
+                input.select();
             });
+        } catch (e) {
+            console.error("[Aether] openOmnibox error:", e);
         }
-
-        const input = document.getElementById("aether-omnibox-input");
-        input.value = window.location.href.includes("start.html") ? "" : window.location.href;
-        omniboxOverlay.style.display = "flex";
-
-        requestAnimationFrame(() => {
-            omniboxOverlay.style.opacity = "1";
-            input.focus();
-            input.select();
-        });
     }
 
     function closeOmnibox() {
@@ -738,37 +878,48 @@ pub const AETHER_CORE_SCRIPT: &str = r###"
     }
 
     // ==========================================
-    // 7. TOASTS & МЕДИА-КОНТРОЛЬ
+    // 8. TOASTS & МЕДИА-КОНТРОЛЬ (ЧИСТЫЙ DOM БЕЗ INNERHTML)
     // ==========================================
     function showToast(message, icon = "🌌") {
-        const target = document.body || document.documentElement;
-        if (!target) return;
+        try {
+            const target = document.documentElement || document.body;
+            if (!target) return;
 
-        let container = document.getElementById("aether-toast-container");
-        if (!container) {
-            container = document.createElement("div");
-            container.id = "aether-toast-container";
-            container.style.cssText = "position: fixed !important; bottom: 24px !important; right: 24px !important; z-index: 2147483647 !important; display: flex !important; flex-direction: column !important; gap: 10px !important; pointer-events: none !important;";
-            target.appendChild(container);
-        }
+            let container = document.getElementById("aether-toast-container");
+            if (!container) {
+                container = document.createElement("div");
+                container.id = "aether-toast-container";
+                container.style.cssText = "position: fixed !important; bottom: 24px !important; right: 24px !important; z-index: 2147483647 !important; display: flex !important; flex-direction: column !important; gap: 10px !important; pointer-events: none !important;";
+                target.appendChild(container);
+            }
 
-        const toast = document.createElement("div");
-        toast.style.cssText = "display: flex !important; align-items: center !important; gap: 10px !important; background: rgba(15, 23, 42, 0.94) !important; backdrop-filter: blur(14px) !important; border: 1px solid rgba(168, 85, 247, 0.5) !important; box-shadow: 0 12px 30px rgba(0,0,0,0.6) !important; border-radius: 12px !important; padding: 12px 18px !important; color: #f8fafc !important; font-size: 13.5px !important; max-width: 420px !important; opacity: 0; transform: translateY(12px); transition: all 0.22s ease-out !important;";
-        toast.innerHTML = `<span style="font-size: 16px;">${icon}</span><span>${message}</span>`;
-        container.appendChild(toast);
+            const toast = document.createElement("div");
+            toast.style.cssText = "display: flex !important; align-items: center !important; gap: 10px !important; background: rgba(15, 23, 42, 0.94) !important; backdrop-filter: blur(14px) !important; border: 1px solid rgba(168, 85, 247, 0.5) !important; box-shadow: 0 12px 30px rgba(0,0,0,0.6) !important; border-radius: 12px !important; padding: 12px 18px !important; color: #f8fafc !important; font-size: 13.5px !important; max-width: 420px !important; opacity: 0; transform: translateY(12px); transition: all 0.22s ease-out !important;";
 
-        requestAnimationFrame(() => {
-            toast.style.opacity = "1";
-            toast.style.transform = "translateY(0)";
-        });
+            const iconSpan = document.createElement("span");
+            iconSpan.style.cssText = "font-size: 16px;";
+            iconSpan.textContent = icon;
 
-        setTimeout(() => {
-            toast.style.opacity = "0";
-            toast.style.transform = "translateY(10px)";
+            const msgSpan = document.createElement("span");
+            msgSpan.textContent = message;
+
+            toast.appendChild(iconSpan);
+            toast.appendChild(msgSpan);
+            container.appendChild(toast);
+
+            requestAnimationFrame(() => {
+                toast.style.opacity = "1";
+                toast.style.transform = "translateY(0)";
+            });
+
             setTimeout(() => {
-                if (toast.parentNode) toast.parentNode.removeChild(toast);
-            }, 250);
-        }, 3000);
+                toast.style.opacity = "0";
+                toast.style.transform = "translateY(10px)";
+                setTimeout(() => {
+                    if (toast.parentNode) toast.parentNode.removeChild(toast);
+                }, 250);
+            }, 3000);
+        } catch (_) {}
     }
 
     function togglePlayPause() {
@@ -834,116 +985,162 @@ pub const AETHER_CORE_SCRIPT: &str = r###"
     }
 
     // ==========================================
-    // 8. YOUTUBE ADBLOCK
+    // 9. YOUTUBE ADBLOCK
     // ==========================================
     function setupYouTubeAdBlock() {
         if (!location.hostname.includes("youtube.com")) return;
 
         setInterval(() => {
-            const skipBtn = document.querySelector('.ytp-skip-ad-button, .ytp-ad-skip-button, .ytp-ad-skip-button-modern');
-            if (skipBtn) skipBtn.click();
+            try {
+                const skipBtn = document.querySelector('.ytp-skip-ad-button, .ytp-ad-skip-button, .ytp-ad-skip-button-modern');
+                if (skipBtn) skipBtn.click();
 
-            const video = document.querySelector('video');
-            const adShowing = document.querySelector('.ad-showing, .ad-interrupting');
-            if (video && adShowing) {
-                video.playbackRate = 16.0;
-                video.muted = true;
-                if (isFinite(video.duration) && video.duration > 0) video.currentTime = video.duration;
-            }
+                const video = document.querySelector('video');
+                const adShowing = document.querySelector('.ad-showing, .ad-interrupting');
+                if (video && adShowing) {
+                    video.playbackRate = 16.0;
+                    video.muted = true;
+                    if (isFinite(video.duration) && video.duration > 0) video.currentTime = video.duration;
+                }
 
-            const adOverlays = document.querySelectorAll('ytd-ad-slot-renderer, #player-ads, ytd-banner-promo-renderer, ytd-in-feed-ad-layout-renderer');
-            adOverlays.forEach(el => el.style.display = 'none');
+                const adOverlays = document.querySelectorAll('ytd-ad-slot-renderer, #player-ads, ytd-banner-promo-renderer, ytd-in-feed-ad-layout-renderer');
+                adOverlays.forEach(el => el.style.display = 'none');
+            } catch (_) {}
         }, 300);
     }
 
     // ==========================================
-    // 9. ГОРЯЧИЕ КЛАВИШИ
+    // 10. ГОРЯЧИЕ КЛАВИШИ & ПЕРЕХВАТ TARGET="_BLANK"
     // ==========================================
     window.addEventListener('keydown', (e) => {
-        const ctrlOrCmd = e.ctrlKey || e.metaKey;
-        const activeEl = document.activeElement;
-        const isTyping = activeEl && (['INPUT', 'TEXTAREA'].includes(activeEl.tagName) || activeEl.isContentEditable);
+        try {
+            const ctrlOrCmd = e.ctrlKey || e.metaKey;
+            const activeEl = document.activeElement;
+            const isTyping = activeEl && (['INPUT', 'TEXTAREA'].includes(activeEl.tagName) || activeEl.isContentEditable);
 
-        if (ctrlOrCmd && (e.key === 't' || e.key === 'T' || e.key === 'е' || e.key === 'Е')) {
-            e.preventDefault();
-            createNewTab();
-            return;
-        }
+            if (ctrlOrCmd && (e.key === 't' || e.key === 'T' || e.key === 'е' || e.key === 'Е')) {
+                e.preventDefault();
+                createNewTab();
+                return;
+            }
 
-        if (ctrlOrCmd && (e.key === 'w' || e.key === 'W' || e.key === 'ц' || e.key === 'Ц')) {
-            e.preventDefault();
-            const state = getTabsState();
-            closeTab(state.activeIndex);
-            return;
-        }
+            if (ctrlOrCmd && (e.key === 'w' || e.key === 'W' || e.key === 'ц' || e.key === 'Ц')) {
+                e.preventDefault();
+                const state = getTabsState();
+                closeTab(state.activeIndex);
+                return;
+            }
 
-        if (ctrlOrCmd && e.key === 'Tab') {
-            e.preventDefault();
-            const state = getTabsState();
-            const nextIndex = e.shiftKey 
-                ? (state.activeIndex - 1 + state.tabs.length) % state.tabs.length
-                : (state.activeIndex + 1) % state.tabs.length;
-            switchToTab(nextIndex);
-            return;
-        }
+            if (ctrlOrCmd && e.key === 'Tab') {
+                e.preventDefault();
+                const state = getTabsState();
+                const nextIndex = e.shiftKey 
+                    ? (state.activeIndex - 1 + state.tabs.length) % state.tabs.length
+                    : (state.activeIndex + 1) % state.tabs.length;
+                switchToTab(nextIndex);
+                return;
+            }
 
-        if (e.key === 'F6' || (ctrlOrCmd && (e.key === 'l' || e.key === 'L' || e.key === 'д' || e.key === 'Д'))) {
-            e.preventDefault();
-            openOmnibox();
-            return;
-        }
+            if (e.key === 'F6' || (ctrlOrCmd && (e.key === 'l' || e.key === 'L' || e.key === 'д' || e.key === 'Д'))) {
+                e.preventDefault();
+                openOmnibox();
+                return;
+            }
 
-        if (isTyping) return;
+            if (e.key === 'Escape') {
+                closeOmnibox();
+                closeSettings();
+                return;
+            }
 
-        if (ctrlOrCmd && e.code === 'Space') {
-            e.preventDefault();
-            togglePlayPause();
-        }
-        else if (ctrlOrCmd && (e.key === 'p' || e.key === 'P' || e.key === 'з' || e.key === 'З')) {
-            e.preventDefault();
-            togglePiP();
-        }
-        else if (ctrlOrCmd && (e.key === 'm' || e.key === 'M' || e.key === 'ь' || e.key === 'Ь')) {
-            e.preventDefault();
-            toggleAudioOnly();
-        }
-        else if (ctrlOrCmd && (e.key === 'd' || e.key === 'D' || e.key === 'в' || e.key === 'В')) {
-            e.preventDefault();
-            downloadMedia();
-        }
-        else if (e.altKey && e.key === 'ArrowLeft') {
-            e.preventDefault();
-            window.history.back();
-        }
-        else if (e.altKey && e.key === 'ArrowRight') {
-            e.preventDefault();
-            window.history.forward();
-        }
-        else if (e.key === 'F5' || (ctrlOrCmd && (e.key === 'r' || e.key === 'R' || e.key === 'к' || e.key === 'К'))) {
-            e.preventDefault();
-            window.location.reload();
-        }
+            if (isTyping) return;
+
+            if (ctrlOrCmd && e.code === 'Space') {
+                e.preventDefault();
+                togglePlayPause();
+            }
+            else if (ctrlOrCmd && (e.key === 'p' || e.key === 'P' || e.key === 'з' || e.key === 'З')) {
+                e.preventDefault();
+                togglePiP();
+            }
+            else if (ctrlOrCmd && (e.key === 'm' || e.key === 'M' || e.key === 'ь' || e.key === 'Ь')) {
+                e.preventDefault();
+                toggleAudioOnly();
+            }
+            else if (ctrlOrCmd && (e.key === 'd' || e.key === 'D' || e.key === 'в' || e.key === 'В')) {
+                e.preventDefault();
+                downloadMedia();
+            }
+            else if (e.altKey && e.key === 'ArrowLeft') {
+                e.preventDefault();
+                window.history.back();
+            }
+            else if (e.altKey && e.key === 'ArrowRight') {
+                e.preventDefault();
+                window.history.forward();
+            }
+            else if (e.key === 'F5' || (ctrlOrCmd && (e.key === 'r' || e.key === 'R' || e.key === 'к' || e.key === 'К'))) {
+                e.preventDefault();
+                window.location.reload();
+            }
+        } catch (_) {}
+    });
+
+    // Авто-открытие ссылок target="_blank" в виде новой вкладки Aether
+    document.addEventListener('click', (e) => {
+        try {
+            const link = e.target && e.target.closest ? e.target.closest('a') : null;
+            if (link && link.target === '_blank' && link.href && !link.href.startsWith('javascript:')) {
+                e.preventDefault();
+                createNewTab(link.href);
+            }
+        } catch (_) {}
+    }, true);
+
+    // Скрытие острова в полноэкранном режиме видео
+    document.addEventListener('fullscreenchange', () => {
+        try {
+            const root = document.getElementById('aether-island-root');
+            if (root) {
+                root.style.display = document.fullscreenElement ? 'none' : 'block';
+            }
+        } catch (_) {}
     });
 
     // ==========================================
-    // 10. ИНИЦИАЛИЗАЦИЯ И ПОСТОЯННЫЙ СЕРДЦЕБИЕНИЕ
+    // 11. ИНИЦИАЛИЗАЦИЯ И СЕРДЦЕБИЕНИЕ
     // ==========================================
     function init() {
-        mountDynamicIsland();
-        updateCurrentTabInfo();
-        setupYouTubeAdBlock();
+        try { mountDynamicIsland(); } catch (e) { console.error("[Aether] init mount:", e); }
+        try { updateCurrentTabInfo(); } catch (e) { console.error("[Aether] init tab:", e); }
+        try { setupYouTubeAdBlock(); } catch (e) { console.error("[Aether] init adblock:", e); }
 
         window.addEventListener('yt-navigate-finish', () => {
-            ensureIslandAttached();
-            updateCurrentTabInfo();
+            try { ensureIslandAttached(); updateCurrentTabInfo(); } catch (_) {}
+        });
+        window.addEventListener('yt-page-data-updated', () => {
+            try { ensureIslandAttached(); updateCurrentTabInfo(); } catch (_) {}
         });
         window.addEventListener('popstate', () => {
-            ensureIslandAttached();
-            updateCurrentTabInfo();
+            try { ensureIslandAttached(); updateCurrentTabInfo(); } catch (_) {}
+        });
+        window.addEventListener('load', () => {
+            try { ensureIslandAttached(); updateCurrentTabInfo(); } catch (_) {}
         });
 
-        // Сердцебиение: проверка видимости острова каждые 400мс
-        setInterval(ensureIslandAttached, 400);
+        // Сердцебиение: проверка DOM и обновления активной вкладки каждые 300мс
+        setInterval(() => {
+            try {
+                ensureIslandAttached();
+                const state = getTabsState();
+                if (state.tabs && state.tabs[state.activeIndex]) {
+                    const curTab = state.tabs[state.activeIndex];
+                    if (curTab.url !== window.location.href) {
+                        updateCurrentTabInfo();
+                    }
+                }
+            } catch (_) {}
+        }, 300);
     }
 
     if (document.readyState === 'loading') {

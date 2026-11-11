@@ -20,7 +20,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // 1. Создаем нативное окно через Tao с глубокой тёмной темой
     let window = WindowBuilder::new()
-        .with_title(format!("{} v0.5.6 — Легкий медиа-браузер", APP_NAME))
+        .with_title(format!("{} v0.5.7 — Легкий медиа-браузер", APP_NAME))
         .with_inner_size(tao::dpi::LogicalSize::new(1440.0, 900.0))
         .with_theme(Some(Theme::Dark))
         .build(&event_loop)?;
@@ -67,11 +67,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut web_context = WebContext::new(Some(profile_dir));
 
+    let core_script = scripts::get_core_script(&start_url);
+
     // 3. Инициализируем рендерер Wry с переданным контекстом
     let _webview = WebViewBuilder::with_web_context(&mut web_context)
         .with_clipboard(true)
         .with_devtools(true)
-        .with_initialization_script(scripts::AETHER_CORE_SCRIPT)
+        .with_initialization_script(&core_script)
         .with_url(&start_url)
         .build(&window)?;
 
@@ -81,7 +83,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         match event {
             Event::NewEvents(StartCause::Init) => {
-                println!("[Aether v0.5.6] Запущен успешно!");
+                println!("[Aether v0.5.7] Запущен успешно!");
                 println!("  Стартовая страница: {}", start_url);
                 println!("  F6 / Ctrl+L: поиск / омнибокс");
                 println!("  Ctrl+T:      новая вкладка");
