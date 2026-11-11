@@ -1,15 +1,17 @@
-//! Встроенный рантайм Aether Browser v0.5.2:
-//! - Плавающий Dynamic Island (верхний бар с навигацией, адресом, быстрыми сервисами и медиа-кнопками)
+//! Встроенный рантайм Aether Browser v0.5.3:
+//! - Настраиваемые быстрые сервисы (пользователь сам добавляет, удаляет и редактирует закладки)
+//! - Быстрый переход по Ctrl+1..9 к своим сервисам
+//! - Плавающий Dynamic Island с навигацией и медиа-панелью
 //! - Стильный HUD Омнибокс с префиксами (F6 / Ctrl+L)
 //! - Неблокирующие всплывающие уведомления (Toasts)
-//! - Умный пропуск рекламы на YouTube (16x skip + авто-клик)
-//! - Медиа-контроль: Picture-in-Picture, режим "Только аудио", скачивание через yt-dlp
+//! - YouTube AdBlock (16x skip + авто-клик)
+//! - Медиа-контроль: PiP, режим "Только аудио", скачивание через yt-dlp
 
 pub const AETHER_CORE_SCRIPT: &str = r#"
 (() => {
     if (window.__AETHER_INJECTED__) return;
     window.__AETHER_INJECTED__ = true;
-    console.log("⚡ Aether Engine v0.5.2: Запущен современный Dynamic Island и медиа-контроль");
+    console.log("⚡ Aether Engine v0.5.3: Модуль кастомных быстрых сервисов и Dynamic Island запущен");
 
     // ==========================================
     // 1. СТИЛИ ИНТЕРФЕЙСА AETHER
@@ -37,10 +39,10 @@ pub const AETHER_CORE_SCRIPT: &str = r#"
 
             #aether-island {
                 pointer-events: auto;
-                background: rgba(15, 23, 42, 0.88);
+                background: rgba(15, 23, 42, 0.90);
                 backdrop-filter: blur(20px) saturate(180%);
                 -webkit-backdrop-filter: blur(20px) saturate(180%);
-                border: 1px solid rgba(168, 85, 247, 0.35);
+                border: 1px solid rgba(168, 85, 247, 0.4);
                 border-radius: 9999px;
                 padding: 4px 10px;
                 display: flex;
@@ -51,11 +53,10 @@ pub const AETHER_CORE_SCRIPT: &str = r#"
             }
 
             #aether-island:hover {
-                border-color: rgba(192, 132, 252, 0.6);
+                border-color: rgba(192, 132, 252, 0.65);
                 box-shadow: 0 12px 35px rgba(0, 0, 0, 0.6), 0 0 25px rgba(168, 85, 247, 0.35);
             }
 
-            /* Кнопки навигации и действий */
             .aether-btn {
                 width: 30px;
                 height: 30px;
@@ -73,7 +74,7 @@ pub const AETHER_CORE_SCRIPT: &str = r#"
             }
             .aether-btn:hover {
                 background: rgba(168, 85, 247, 0.25);
-                border-color: rgba(168, 85, 247, 0.4);
+                border-color: rgba(168, 85, 247, 0.45);
                 color: #ffffff;
                 transform: scale(1.06);
             }
@@ -86,16 +87,15 @@ pub const AETHER_CORE_SCRIPT: &str = r#"
                 box-shadow: 0 0 12px rgba(168, 85, 247, 0.6);
             }
 
-            /* Строка URL в острове */
             #aether-url-pill {
                 display: flex;
                 align-items: center;
                 gap: 8px;
                 background: rgba(30, 41, 59, 0.7);
-                border: 1px solid rgba(168, 85, 247, 0.25);
+                border: 1px solid rgba(168, 85, 247, 0.3);
                 border-radius: 9999px;
                 padding: 5px 14px;
-                max-width: 280px;
+                max-width: 260px;
                 cursor: pointer;
                 transition: all 0.2s ease;
             }
@@ -113,7 +113,6 @@ pub const AETHER_CORE_SCRIPT: &str = r#"
                 text-overflow: ellipsis;
             }
 
-            /* Разделители */
             .aether-sep {
                 width: 1px;
                 height: 18px;
@@ -121,23 +120,53 @@ pub const AETHER_CORE_SCRIPT: &str = r#"
                 margin: 0 2px;
             }
 
-            /* Быстрые бейджи сервисов */
+            /* Кастомные сервисы */
+            #aether-services-container {
+                display: flex;
+                align-items: center;
+                gap: 5px;
+            }
             .aether-svc-badge {
-                padding: 3px 8px;
+                padding: 4px 9px;
                 border-radius: 9999px;
-                font-size: 11px;
+                font-size: 11.5px;
                 font-weight: 600;
                 cursor: pointer;
-                transition: all 0.15s ease;
+                border: 1px solid rgba(168, 85, 247, 0.35);
+                background: rgba(168, 85, 247, 0.18);
+                color: #e9d5ff;
+                transition: all 0.18s ease;
             }
-            .aether-svc-yt { background: rgba(239, 68, 68, 0.2); color: #fca5a5; border: 1px solid rgba(239, 68, 68, 0.3); }
-            .aether-svc-yt:hover { background: rgba(239, 68, 68, 0.35); transform: translateY(-1px); }
-            .aether-svc-vk { background: rgba(59, 130, 246, 0.2); color: #93c5fd; border: 1px solid rgba(59, 130, 246, 0.3); }
-            .aether-svc-vk:hover { background: rgba(59, 130, 246, 0.35); transform: translateY(-1px); }
-            .aether-svc-tg { background: rgba(56, 189, 248, 0.2); color: #7dd3fc; border: 1px solid rgba(56, 189, 248, 0.3); }
-            .aether-svc-tg:hover { background: rgba(56, 189, 248, 0.35); transform: translateY(-1px); }
+            .aether-svc-badge:hover {
+                transform: translateY(-1px) scale(1.05);
+                border-color: #c084fc;
+                box-shadow: 0 0 10px rgba(192, 132, 252, 0.4);
+            }
 
-            /* Режим сворачивания острова */
+            .aether-btn-add {
+                width: 24px;
+                height: 24px;
+                border-radius: 50%;
+                background: rgba(255, 255, 255, 0.08);
+                border: 1px dashed rgba(168, 85, 247, 0.5);
+                color: #d8b4fe;
+                font-size: 14px;
+                font-weight: bold;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                cursor: pointer;
+                transition: all 0.15s ease;
+                padding: 0;
+            }
+            .aether-btn-add:hover {
+                background: rgba(168, 85, 247, 0.3);
+                border-style: solid;
+                color: #fff;
+                transform: scale(1.1);
+            }
+
+            /* Сворачивание */
             #aether-island.aether-collapsed {
                 padding: 3px 8px;
             }
@@ -145,7 +174,7 @@ pub const AETHER_CORE_SCRIPT: &str = r#"
                 display: none !important;
             }
 
-            /* Всплывающие уведомления (Toasts) */
+            /* Toasts */
             #aether-toast-container {
                 position: fixed;
                 bottom: 24px;
@@ -176,8 +205,8 @@ pub const AETHER_CORE_SCRIPT: &str = r#"
                 transition: opacity 0.22s ease-out, transform 0.22s ease-out;
             }
 
-            /* Модальный Омнибокс */
-            #aether-omnibox-overlay {
+            /* Оверлей добавления сервиса и Омнибокс */
+            .aether-modal-overlay {
                 position: fixed;
                 inset: 0;
                 z-index: 2147483646;
@@ -191,81 +220,86 @@ pub const AETHER_CORE_SCRIPT: &str = r#"
                 opacity: 0;
                 transition: opacity 0.18s ease-out;
             }
-            #aether-omnibox-card {
+            .aether-modal-card {
                 width: 90%;
-                max-width: 660px;
+                max-width: 560px;
                 background: #0f172a;
                 border: 1px solid rgba(168, 85, 247, 0.45);
                 border-radius: 16px;
-                padding: 18px 22px;
+                padding: 20px 24px;
                 box-shadow: 0 25px 60px rgba(0, 0, 0, 0.7), 0 0 35px rgba(168, 85, 247, 0.25);
                 transform: translateY(-12px) scale(0.98);
                 transition: transform 0.18s cubic-bezier(0.16, 1, 0.3, 1);
                 color: #f8fafc;
                 box-sizing: border-box;
+                font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
             }
-            #aether-omnibox-header {
-                display: flex;
-                align-items: center;
-                justify-content: space-between;
-                margin-bottom: 14px;
-            }
-            #aether-omnibox-title {
+            .aether-modal-card h3 {
+                margin: 0 0 16px 0;
+                font-size: 17px;
+                color: #d8b4fe;
                 display: flex;
                 align-items: center;
                 gap: 8px;
-                font-size: 15px;
-                font-weight: 600;
-                color: #d8b4fe;
             }
-            #aether-omnibox-close-hint {
-                font-size: 11px;
+            .aether-form-group {
+                margin-bottom: 14px;
+            }
+            .aether-form-group label {
+                display: block;
+                font-size: 12.5px;
                 color: #94a3b8;
-                background: rgba(255, 255, 255, 0.08);
-                padding: 3px 8px;
-                border-radius: 6px;
+                margin-bottom: 6px;
             }
-            #aether-omnibox-input {
+            .aether-form-input {
                 width: 100%;
                 box-sizing: border-box;
                 background: rgba(30, 41, 59, 0.85);
-                border: 1.5px solid rgba(168, 85, 247, 0.5);
-                border-radius: 12px;
-                padding: 14px 18px;
-                font-size: 16px;
+                border: 1.5px solid rgba(168, 85, 247, 0.4);
+                border-radius: 10px;
+                padding: 10px 14px;
+                font-size: 14.5px;
                 color: #ffffff;
                 outline: none;
                 transition: border-color 0.15s, box-shadow 0.15s;
             }
-            #aether-omnibox-input:focus {
+            .aether-form-input:focus {
                 border-color: #c084fc;
-                box-shadow: 0 0 16px rgba(192, 132, 252, 0.4);
+                box-shadow: 0 0 14px rgba(192, 132, 252, 0.35);
             }
-            #aether-omnibox-tags {
+            .aether-btn-row {
                 display: flex;
-                flex-wrap: wrap;
-                align-items: center;
-                gap: 8px;
-                margin-top: 14px;
-                font-size: 12px;
+                justify-content: flex-end;
+                gap: 10px;
+                margin-top: 18px;
             }
-            .aether-tag {
-                padding: 4px 10px;
-                border-radius: 6px;
+            .aether-submit-btn {
+                background: #9333ea;
+                color: #ffffff;
+                border: none;
+                border-radius: 8px;
+                padding: 8px 18px;
+                font-size: 13.5px;
+                font-weight: 600;
                 cursor: pointer;
-                transition: opacity 0.15s, transform 0.15s;
+                transition: background 0.15s, transform 0.15s;
             }
-            .aether-tag:hover {
-                opacity: 0.85;
+            .aether-submit-btn:hover {
+                background: #a855f7;
                 transform: translateY(-1px);
             }
-            .aether-tag-yt { background: rgba(239, 68, 68, 0.2); color: #fca5a5; border: 1px solid rgba(239, 68, 68, 0.35); }
-            .aether-tag-vk { background: rgba(59, 130, 246, 0.2); color: #93c5fd; border: 1px solid rgba(59, 130, 246, 0.35); }
-            .aether-tag-gh { background: rgba(148, 163, 184, 0.2); color: #cbd5e1; border: 1px solid rgba(148, 163, 184, 0.35); }
-            #aether-omnibox-hint-enter {
-                margin-left: auto;
-                color: #64748b;
-                font-size: 12px;
+            .aether-cancel-btn {
+                background: rgba(255, 255, 255, 0.08);
+                color: #94a3b8;
+                border: none;
+                border-radius: 8px;
+                padding: 8px 16px;
+                font-size: 13.5px;
+                cursor: pointer;
+            }
+            .aether-cancel-btn:hover {
+                background: rgba(255, 255, 255, 0.15);
+                color: #ffffff;
             }
         `;
         (document.head || document.documentElement).appendChild(style);
@@ -303,7 +337,169 @@ pub const AETHER_CORE_SCRIPT: &str = r#"
     }
 
     // ==========================================
-    // 3. СОВРЕМЕННЫЙ DYNAMIC ISLAND
+    // 3. МЕНЕДЖЕР КАСТОМНЫХ БЫСТРЫХ СЕРВИСОВ
+    // ==========================================
+    const STORAGE_KEY = "__aether_custom_services";
+    const COLOR_PALETTE = [
+        { bg: "rgba(239, 68, 68, 0.22)", border: "rgba(239, 68, 68, 0.45)", text: "#fca5a5" },
+        { bg: "rgba(59, 130, 246, 0.22)", border: "rgba(59, 130, 246, 0.45)", text: "#93c5fd" },
+        { bg: "rgba(168, 85, 247, 0.22)", border: "rgba(168, 85, 247, 0.45)", text: "#d8b4fe" },
+        { bg: "rgba(16, 185, 129, 0.22)", border: "rgba(16, 185, 129, 0.45)", text: "#6ee7b7" },
+        { bg: "rgba(245, 158, 11, 0.22)", border: "rgba(245, 158, 11, 0.45)", text: "#fcd34d" },
+        { bg: "rgba(236, 72, 153, 0.22)", border: "rgba(236, 72, 153, 0.45)", text: "#f472b6" },
+        { bg: "rgba(20, 184, 166, 0.22)", border: "rgba(20, 184, 166, 0.45)", text: "#5eead4" },
+    ];
+
+    function getSavedServices() {
+        try {
+            const raw = localStorage.getItem(STORAGE_KEY);
+            if (raw !== null) {
+                return JSON.parse(raw);
+            }
+        } catch (_) {}
+        // Дефолтные сервисы при самом первом запуске:
+        return [
+            { title: "YouTube", badge: "YT", url: "https://www.youtube.com" },
+            { title: "ВКонтакте", badge: "VK", url: "https://vk.com" },
+            { title: "Telegram", badge: "TG", url: "https://web.telegram.org" }
+        ];
+    }
+
+    function saveServices(services) {
+        try {
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(services));
+        } catch (_) {}
+    }
+
+    function renderQuickServices() {
+        const container = document.getElementById("aether-services-container");
+        if (!container) return;
+        container.innerHTML = "";
+
+        const services = getSavedServices();
+        services.forEach((svc, index) => {
+            const palette = COLOR_PALETTE[index % COLOR_PALETTE.length];
+            const badge = document.createElement("div");
+            badge.className = "aether-svc-badge aether-collapsible";
+            badge.textContent = svc.badge || svc.title.substring(0, 2).toUpperCase();
+            badge.title = `${svc.title} (Ctrl+${index + 1})\n${svc.url}\n\n• Левый клик — открыть\n• Правый клик — удалить`;
+            badge.style.background = palette.bg;
+            badge.style.borderColor = palette.border;
+            badge.style.color = palette.text;
+
+            // Левый клик — переход
+            badge.addEventListener("click", (e) => {
+                e.stopPropagation();
+                window.location.href = svc.url;
+            });
+
+            // Правый клик — удаление
+            badge.addEventListener("contextmenu", (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                if (confirm(`Удалить «${svc.title}» (${svc.url}) из быстрых сервисов?`)) {
+                    services.splice(index, 1);
+                    saveServices(services);
+                    renderQuickServices();
+                    showToast(`Сервис «${svc.title}» удален`, "🗑️");
+                }
+            });
+
+            container.appendChild(badge);
+        });
+    }
+
+    // Модальное окно добавления нового сервиса
+    function openAddServiceModal() {
+        injectAetherStyles();
+        let overlay = document.getElementById("aether-add-svc-overlay");
+        if (!overlay) {
+            overlay = document.createElement("div");
+            overlay.id = "aether-add-svc-overlay";
+            overlay.className = "aether-modal-overlay";
+            overlay.innerHTML = `
+                <div class="aether-modal-card">
+                    <h3><span>⭐</span> <span>Добавить быстрый сервис</span></h3>
+                    <div class="aether-form-group">
+                        <label>Название сервиса:</label>
+                        <input id="aether-form-title" class="aether-form-input" type="text" placeholder="Например: GitHub, Twitch, Kinopoisk..." />
+                    </div>
+                    <div class="aether-form-group">
+                        <label>Короткий бейдж (2–3 буквы):</label>
+                        <input id="aether-form-badge" class="aether-form-input" type="text" maxlength="4" placeholder="GH, TW, KP..." />
+                    </div>
+                    <div class="aether-form-group">
+                        <label>URL адрес:</label>
+                        <input id="aether-form-url" class="aether-form-input" type="text" placeholder="https://..." />
+                    </div>
+                    <div class="aether-btn-row">
+                        <button id="aether-form-cancel" class="aether-cancel-btn">Отмена</button>
+                        <button id="aether-form-save" class="aether-submit-btn">Сохранить</button>
+                    </div>
+                </div>
+            `;
+            document.documentElement.appendChild(overlay);
+
+            document.getElementById("aether-form-cancel").addEventListener("click", closeAddServiceModal);
+            overlay.addEventListener("click", (e) => {
+                if (e.target === overlay) closeAddServiceModal();
+            });
+
+            document.getElementById("aether-form-save").addEventListener("click", submitAddService);
+        }
+
+        // Автозаполнение текущими данными сайта
+        const host = window.location.hostname.replace(/^www\./i, "");
+        const title = document.title || host;
+        const autoBadge = host.split(".")[0].substring(0, 3).toUpperCase() || "WEB";
+
+        document.getElementById("aether-form-title").value = title.substring(0, 25);
+        document.getElementById("aether-form-badge").value = autoBadge;
+        document.getElementById("aether-form-url").value = window.location.href;
+
+        overlay.style.display = "flex";
+        requestAnimationFrame(() => {
+            overlay.style.opacity = "1";
+            document.getElementById("aether-form-title").focus();
+        });
+    }
+
+    function closeAddServiceModal() {
+        const overlay = document.getElementById("aether-add-svc-overlay");
+        if (!overlay) return;
+        overlay.style.opacity = "0";
+        setTimeout(() => {
+            overlay.style.display = "none";
+        }, 180);
+    }
+
+    function submitAddService() {
+        const titleInput = document.getElementById("aether-form-title");
+        const badgeInput = document.getElementById("aether-form-badge");
+        const urlInput = document.getElementById("aether-form-url");
+
+        let title = titleInput.value.trim();
+        let badge = badgeInput.value.trim();
+        let url = urlInput.value.trim();
+
+        if (!title) title = "Сайт";
+        if (!badge) badge = title.substring(0, 2).toUpperCase();
+        if (!url) url = window.location.href;
+        if (!url.startsWith("http://") && !url.startsWith("https://")) {
+            url = "https://" + url;
+        }
+
+        const services = getSavedServices();
+        services.push({ title, badge, url });
+        saveServices(services);
+        renderQuickServices();
+
+        closeAddServiceModal();
+        showToast(`Сервис «${title}» добавлен!`, "✨");
+    }
+
+    // ==========================================
+    // 4. СОВРЕМЕННЫЙ DYNAMIC ISLAND
     // ==========================================
     function buildDynamicIsland() {
         injectAetherStyles();
@@ -340,11 +536,10 @@ pub const AETHER_CORE_SCRIPT: &str = r#"
                     <span id="aether-url-text">${host}</span>
                 </div>
 
-                <!-- Быстрые сервисы -->
+                <!-- Быстрые сервисы пользователя -->
                 <div class="aether-sep aether-collapsible"></div>
-                <div class="aether-svc-badge aether-svc-yt aether-collapsible" id="aether-btn-yt" title="YouTube (Ctrl + 2)">YT</div>
-                <div class="aether-svc-badge aether-svc-vk aether-collapsible" id="aether-btn-vk" title="ВКонтакте (Ctrl + 3)">VK</div>
-                <div class="aether-svc-badge aether-svc-tg aether-collapsible" id="aether-btn-tg" title="Telegram (Ctrl + 4)">TG</div>
+                <div id="aether-services-container"></div>
+                <button id="aether-btn-add-svc" class="aether-btn-add aether-collapsible" title="Добавить текущий сайт в быстрые сервисы">+</button>
 
                 <!-- Медиа-инструменты -->
                 <div class="aether-sep aether-collapsible"></div>
@@ -367,23 +562,19 @@ pub const AETHER_CORE_SCRIPT: &str = r#"
 
         document.documentElement.appendChild(root);
 
-        // Обработчики кнопок острова
+        // Привязка обработчиков
         document.getElementById("aether-nav-back").addEventListener("click", () => window.history.back());
         document.getElementById("aether-nav-forward").addEventListener("click", () => window.history.forward());
         document.getElementById("aether-nav-reload").addEventListener("click", () => window.location.reload());
         document.getElementById("aether-nav-home").addEventListener("click", () => window.location.href = "https://www.google.com");
 
         document.getElementById("aether-url-pill").addEventListener("click", openOmnibox);
-
-        document.getElementById("aether-btn-yt").addEventListener("click", () => window.location.href = "https://www.youtube.com");
-        document.getElementById("aether-btn-vk").addEventListener("click", () => window.location.href = "https://vk.com");
-        document.getElementById("aether-btn-tg").addEventListener("click", () => window.location.href = "https://web.telegram.org");
+        document.getElementById("aether-btn-add-svc").addEventListener("click", openAddServiceModal);
 
         document.getElementById("aether-tool-audio").addEventListener("click", toggleAudioOnly);
         document.getElementById("aether-tool-pip").addEventListener("click", togglePiP);
         document.getElementById("aether-tool-download").addEventListener("click", downloadMedia);
 
-        // Кнопка сворачивания
         const island = document.getElementById("aether-island");
         const collapseBtn = document.getElementById("aether-toggle-collapse");
         const collapseIcon = document.getElementById("aether-collapse-icon");
@@ -394,10 +585,13 @@ pub const AETHER_CORE_SCRIPT: &str = r#"
             localStorage.setItem("__aether_island_collapsed", nowCollapsed);
             collapseIcon.innerHTML = `<polyline points="${nowCollapsed ? '6 9 12 15 18 9' : '18 15 12 9 6 15'}"/>`;
         });
+
+        // Отрисовываем кастомные сервисы пользователя
+        renderQuickServices();
     }
 
     // ==========================================
-    // 4. СОВРЕМЕННЫЙ HUD ОМНИБОКС (CTRL+L / F6)
+    // 5. СОВРЕМЕННЫЙ HUD ОМНИБОКС (CTRL+L / F6)
     // ==========================================
     let omniboxOverlay = null;
     let omniboxInput = null;
@@ -408,21 +602,22 @@ pub const AETHER_CORE_SCRIPT: &str = r#"
 
         omniboxOverlay = document.createElement("div");
         omniboxOverlay.id = "aether-omnibox-overlay";
+        omniboxOverlay.className = "aether-modal-overlay";
         omniboxOverlay.innerHTML = `
-            <div id="aether-omnibox-card">
-                <div id="aether-omnibox-header">
-                    <div id="aether-omnibox-title">
+            <div id="aether-omnibox-card" class="aether-modal-card">
+                <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px;">
+                    <div style="display: flex; align-items: center; gap: 8px; font-size: 15px; font-weight: 600; color: #d8b4fe;">
                         <span>🌌</span>
                         <span>Aether Omnibox</span>
                     </div>
-                    <div id="aether-omnibox-close-hint">Esc — закрыть</div>
+                    <div style="font-size: 11px; color: #94a3b8; background: rgba(255, 255, 255, 0.08); padding: 3px 8px; border-radius: 6px;">Esc — закрыть</div>
                 </div>
-                <input id="aether-omnibox-input" type="text" autocomplete="off" spellcheck="false" placeholder="Адрес сайта, поисковый запрос или команда (yt:, vk:, gh:)..." />
-                <div id="aether-omnibox-tags">
+                <input id="aether-omnibox-input" class="aether-form-input" style="font-size: 16px; padding: 13px 16px;" type="text" autocomplete="off" spellcheck="false" placeholder="Адрес сайта, поисковый запрос или команда (yt:, vk:, gh:)..." />
+                <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 14px; font-size: 12px;">
                     <span class="aether-tag aether-tag-yt" data-prefix="yt: ">yt: YouTube</span>
                     <span class="aether-tag aether-tag-vk" data-prefix="vk: ">vk: ВКонтакте</span>
                     <span class="aether-tag aether-tag-gh" data-prefix="gh: ">gh: GitHub</span>
-                    <span id="aether-omnibox-hint-enter">↵ Enter для перехода</span>
+                    <span style="margin-left: auto; color: #64748b; font-size: 12px;">↵ Enter для перехода</span>
                 </div>
             </div>
         `;
@@ -467,8 +662,6 @@ pub const AETHER_CORE_SCRIPT: &str = r#"
 
         requestAnimationFrame(() => {
             omniboxOverlay.style.opacity = "1";
-            const card = document.getElementById("aether-omnibox-card");
-            if (card) card.style.transform = "translateY(0) scale(1)";
             omniboxInput.focus();
             omniboxInput.select();
         });
@@ -477,8 +670,6 @@ pub const AETHER_CORE_SCRIPT: &str = r#"
     function closeOmnibox() {
         if (!omniboxOverlay) return;
         omniboxOverlay.style.opacity = "0";
-        const card = document.getElementById("aether-omnibox-card");
-        if (card) card.style.transform = "translateY(-12px) scale(0.98)";
         setTimeout(() => {
             omniboxOverlay.style.display = "none";
         }, 180);
@@ -525,7 +716,7 @@ pub const AETHER_CORE_SCRIPT: &str = r#"
     }
 
     // ==========================================
-    // 5. МЕДИА-КОНТРОЛЬ И СКАЧИВАНИЕ
+    // 6. МЕДИА-КОНТРОЛЬ И СКАЧИВАНИЕ
     // ==========================================
     function togglePlayPause() {
         if (window.vk && window.vk.audio) {
@@ -609,7 +800,7 @@ pub const AETHER_CORE_SCRIPT: &str = r#"
     }
 
     // ==========================================
-    // 6. ADBLOCK И УСКОРЕНИЕ РЕКЛАМЫ
+    // 7. ADBLOCK И УСКОРЕНИЕ РЕКЛАМЫ
     // ==========================================
     function setupYouTubeAdBlock() {
         if (!location.hostname.includes("youtube.com")) return;
@@ -651,7 +842,7 @@ pub const AETHER_CORE_SCRIPT: &str = r#"
     }
 
     // ==========================================
-    // 7. ОБРАБОТКА ГОРЯЧИХ КЛАВИШ
+    // 8. ОБРАБОТКА ГОРЯЧИХ КЛАВИШ
     // ==========================================
     window.addEventListener('keydown', (e) => {
         const ctrlOrCmd = e.ctrlKey || e.metaKey;
@@ -668,6 +859,18 @@ pub const AETHER_CORE_SCRIPT: &str = r#"
         }
 
         if (isTyping) return;
+
+        // Переход по быстрым сервисам пользователя: Ctrl + 1..9
+        if (ctrlOrCmd && e.key >= '1' && e.key <= '9') {
+            const index = parseInt(e.key) - 1;
+            const services = getSavedServices();
+            if (services && services[index]) {
+                e.preventDefault();
+                showToast(`Переход: ${services[index].title}`, "🚀");
+                window.location.href = services[index].url;
+                return;
+            }
+        }
 
         if (ctrlOrCmd && e.code === 'Space') {
             e.preventDefault();
@@ -697,25 +900,8 @@ pub const AETHER_CORE_SCRIPT: &str = r#"
             e.preventDefault();
             window.location.reload();
         }
-        else if (ctrlOrCmd && e.key === '1') {
-            e.preventDefault();
-            window.location.href = "https://www.google.com";
-        }
-        else if (ctrlOrCmd && e.key === '2') {
-            e.preventDefault();
-            window.location.href = "https://www.youtube.com";
-        }
-        else if (ctrlOrCmd && e.key === '3') {
-            e.preventDefault();
-            window.location.href = "https://vk.com";
-        }
-        else if (ctrlOrCmd && e.key === '4') {
-            e.preventDefault();
-            window.location.href = "https://web.telegram.org";
-        }
     });
 
-    // Инициализация при загрузке документа
     function init() {
         buildDynamicIsland();
         setupYouTubeAdBlock();
