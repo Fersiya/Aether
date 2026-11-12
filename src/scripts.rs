@@ -1,12 +1,15 @@
-//! Встроенный рантайм Aether Browser v0.6.6 (Arc / Zen Style):
-//! - Полноэкранный режим видео (YouTube/VK/фильмы): нативное скрытие панели задач Windows через Borderless Fullscreen в Tao
-//! - Устранение любого затемнения слева: сайдбар при скрытии полностью прозрачен и не отбрасывает тень на сайт
-//! - Открытие ссылок по клику колёсиком мыши (middle-click) в новой вкладке Aether (а не в отдельном окне)
+//! Встроенный рантайм Aether Browser v0.6.7 (Arc / Zen Style):
+//! - Запуск в полный экран: браузер всегда открывается развернутым на весь экран
+//! - Тёмная плашка подтверждения удаления истории: без белых нативных окон, отмена по клику мимо окна
+//! - Исправление фона и верстки: устранены белые полосы и обрезка часов при добавлении сервисов
+//! - Расширенная сетка быстрых сервисов для аккуратного размещения 6+ карточек
+//! - Полноэкранный режим видео (YouTube/VK/фильмы): Borderless Fullscreen в Tao
+//! - Устранение любого затемнения слева: сайдбар при скрытии полностью прозрачен
+//! - Открытие ссылок по клику колёсиком мыши (middle-click) в новой вкладке Aether
 //! - Перехват target="_blank" и window.open для открытия во вкладках браузера
 //! - Быстрые сервисы с реальными логотипами (YouTube, VK, Telegram, GitHub, Twitch, Кинопоиск, фавиконки любых сайтов через CDN)
 //! - Рекомендация часто посещаемых сайтов (от 3 визитов) в модальном окне добавления быстрого сервиса
-//! - Запрос подтверждения при очистке истории
-//! - Мгновенный неоновый индикатор загрузки (Top Glowing Progress Bar) для мгновенного визуального отклика на клик
+//! - Мгновенный неоновый индикатор загрузки (Top Glowing Progress Bar) для мгновенного визуального отклика
 
 pub const START_PAGE_HTML: &str = r###"<!DOCTYPE html>
 <html lang="ru">
@@ -16,22 +19,36 @@ pub const START_PAGE_HTML: &str = r###"<!DOCTYPE html>
     <title>Aether — Новая вкладка</title>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
+        html {
+            background-color: #07040d !important;
+            background: #07040d !important;
+            min-height: 100%;
+            width: 100%;
+            margin: 0;
+            padding: 0;
+        }
         body {
             min-height: 100vh;
+            width: 100%;
+            background-color: #07040d !important;
             background: 
                 radial-gradient(circle at 50% 15%, rgba(147, 51, 234, 0.32) 0%, transparent 50%),
                 radial-gradient(circle at 80% 75%, rgba(124, 58, 237, 0.20) 0%, transparent 45%),
                 radial-gradient(circle at 20% 80%, rgba(168, 85, 247, 0.15) 0%, transparent 50%),
                 #07040d;
+            background-attachment: fixed;
+            background-repeat: no-repeat;
+            background-size: cover;
             color: #f8fafc;
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
             display: flex;
             flex-direction: column;
             align-items: center;
-            justify-content: center;
-            padding: 40px 20px;
+            justify-content: flex-start;
+            padding: 30px 20px 40px;
             user-select: none;
             overflow-x: hidden;
+            overflow-y: auto;
             position: relative;
         }
 
@@ -77,7 +94,8 @@ pub const START_PAGE_HTML: &str = r###"<!DOCTYPE html>
 
         #aether-clock-wrap {
             text-align: center;
-            margin-bottom: 24px;
+            margin-top: 18px;
+            margin-bottom: 20px;
         }
         #aether-clock {
             font-size: 68px;
@@ -98,7 +116,7 @@ pub const START_PAGE_HTML: &str = r###"<!DOCTYPE html>
             display: flex;
             align-items: center;
             gap: 14px;
-            margin-bottom: 30px;
+            margin-bottom: 24px;
         }
         .aether-emblem-svg {
             width: 44px;
@@ -119,7 +137,7 @@ pub const START_PAGE_HTML: &str = r###"<!DOCTYPE html>
             width: 100%;
             max-width: 620px;
             position: relative;
-            margin-bottom: 36px;
+            margin-bottom: 28px;
         }
         #aether-search-box {
             width: 100%;
@@ -198,7 +216,7 @@ pub const START_PAGE_HTML: &str = r###"<!DOCTYPE html>
         .aether-ac-icon { font-size: 16px; color: #c084fc; width: 22px; text-align: center; }
         .aether-ac-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
 
-        /* Быстрые сервисы: гибкая центровка */
+        /* Быстрые сервисы: гибкая центровка для аккуратного размещения 6+ карточек */
         #aether-grid {
             display: flex;
             justify-content: center;
@@ -206,8 +224,8 @@ pub const START_PAGE_HTML: &str = r###"<!DOCTYPE html>
             flex-wrap: wrap;
             gap: 14px;
             width: 100%;
-            max-width: 760px;
-            margin: 0 auto 36px;
+            max-width: min(960px, 95vw);
+            margin: 0 auto 30px;
         }
         .aether-card {
             width: 125px;
@@ -561,7 +579,7 @@ pub const START_PAGE_HTML: &str = r###"<!DOCTYPE html>
 
     <div id="aether-search-container">
         <form id="aether-search-box" onsubmit="handleSearchSubmit(event)">
-            <input id="aether-search-input" type="text" placeholder="Поиск или URL-адрес..." autocomplete="off" autofocus />
+            <input id="aether-search-input" type="text" placeholder="Поиск или URL-адрес..." autocomplete="off" />
             <button id="aether-search-btn" type="submit" title="Искать">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
             </button>
@@ -727,13 +745,67 @@ pub const START_PAGE_HTML: &str = r###"<!DOCTYPE html>
             } catch (_) {}
         }
 
-        function clearAllHistory() {
-            if (!confirm('Вы уверены, что хотите удалить всю историю? Это действие нельзя отменить.')) {
-                return;
+        function showToast(text) {
+            let t = document.getElementById('aether-start-toast');
+            if (!t) {
+                t = document.createElement('div');
+                t.id = 'aether-start-toast';
+                t.style.cssText = "position:fixed; top:20px; left:50%; transform:translateX(-50%); background:rgba(20,12,40,0.96); border:1px solid rgba(168,85,247,0.6); box-shadow:0 10px 30px rgba(0,0,0,0.8), 0 0 20px rgba(168,85,247,0.4); color:#ffffff; padding:10px 22px; border-radius:10px; font-size:13.5px; font-weight:500; z-index:2147483647; display:none; backdrop-filter:blur(14px); transition:opacity 0.25s ease;";
+                document.body.appendChild(t);
             }
-            localStorage.removeItem('aether_search_history');
-            localStorage.removeItem('aether_site_visits');
+            t.textContent = text;
+            t.style.display = 'block';
+            t.style.opacity = '1';
+            setTimeout(() => {
+                t.style.opacity = '0';
+                setTimeout(() => { t.style.display = 'none'; }, 250);
+            }, 2200);
+        }
+
+        function showClearHistoryConfirm(e) {
+            if (e) e.stopPropagation();
+            const banner = document.getElementById('aether-history-confirm-banner');
+            const btn = document.getElementById('btn-show-clear-history');
+            if (banner) {
+                banner.style.display = 'block';
+                if (btn) btn.style.display = 'none';
+                setTimeout(() => {
+                    const onOutsideClick = (evt) => {
+                        const b = document.getElementById('aether-history-confirm-banner');
+                        if (b && b.style.display === 'block') {
+                            if (!b.contains(evt.target)) {
+                                cancelClearHistory();
+                                document.removeEventListener('click', onOutsideClick);
+                            }
+                        } else {
+                            document.removeEventListener('click', onOutsideClick);
+                        }
+                    };
+                    document.addEventListener('click', onOutsideClick);
+                }, 20);
+            }
+        }
+
+        function cancelClearHistory(e) {
+            if (e) e.stopPropagation();
+            const banner = document.getElementById('aether-history-confirm-banner');
+            const btn = document.getElementById('btn-show-clear-history');
+            if (banner) banner.style.display = 'none';
+            if (btn) btn.style.display = 'inline-flex';
+        }
+
+        function executeClearAllHistory(e) {
+            if (e) e.stopPropagation();
+            try {
+                localStorage.removeItem('aether_search_history');
+                localStorage.removeItem('aether_site_visits');
+            } catch (_) {}
             renderHistoryTab();
+            showToast('🗑️ История успешно очищена');
+        }
+
+        function clearAllHistory() {
+            showClearHistoryConfirm();
         }
 
         function navigateTo(target) {
@@ -1072,9 +1144,24 @@ pub const START_PAGE_HTML: &str = r###"<!DOCTYPE html>
             }
 
             let html = `
-                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px;">
+                <div id="aether-history-toolbar" style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
                     <span style="font-size:13px; color:#cbd5e1;">Всего записей: ${history.length}</span>
-                    <button onclick="clearAllHistory()" style="background:rgba(239,68,68,0.2); border:1px solid rgba(239,68,68,0.4); color:#fca5a5; padding:4px 10px; border-radius:6px; cursor:pointer; font-size:12px;">🗑️ Очистить всю историю</button>
+                    <button id="btn-show-clear-history" type="button" onclick="showClearHistoryConfirm(event)" style="background:rgba(239,68,68,0.2); border:1px solid rgba(239,68,68,0.45); color:#fca5a5; padding:5px 12px; border-radius:7px; cursor:pointer; font-size:12px; transition:all 0.15s; display:inline-flex; align-items:center; gap:5px;">🗑️ Очистить всю историю</button>
+                </div>
+
+                <!-- Предупреждающая плашка в тёмно-фиолетовом стиле браузера -->
+                <div id="aether-history-confirm-banner" style="display:none; background:rgba(30, 14, 42, 0.96); border:1.5px solid rgba(239, 68, 68, 0.65); box-shadow:0 10px 30px rgba(0,0,0,0.7), 0 0 20px rgba(239,68,68,0.3); border-radius:12px; padding:14px 16px; margin-bottom:14px; backdrop-filter:blur(10px);">
+                    <div style="display:flex; align-items:flex-start; gap:10px; font-size:13px; color:#fecaca; margin-bottom:12px; line-height:1.45;">
+                        <span style="font-size:20px; line-height:1;">⚠️</span>
+                        <div>
+                            <div style="font-weight:600; color:#fff; font-size:13.5px;">Очистить всю историю?</div>
+                            <div style="color:#fca5a5; font-size:12px; margin-top:2px;">Вы уверены, что хотите удалить историю поиска и визитов? Это действие нельзя отменить.</div>
+                        </div>
+                    </div>
+                    <div style="display:flex; justify-content:flex-end; gap:8px;">
+                        <button type="button" onclick="cancelClearHistory(event)" style="background:rgba(255,255,255,0.08); border:1px solid rgba(255,255,255,0.16); color:#cbd5e1; padding:6px 14px; border-radius:7px; font-size:12px; cursor:pointer; transition:background 0.15s;">Отмена</button>
+                        <button type="button" onclick="executeClearAllHistory(event)" style="background:linear-gradient(135deg, #ef4444, #dc2626); border:none; color:#ffffff; padding:6px 16px; border-radius:7px; font-size:12px; font-weight:600; cursor:pointer; box-shadow:0 2px 12px rgba(239,68,68,0.45); transition:transform 0.1s;">🗑️ Да, удалить</button>
+                    </div>
                 </div>
             `;
 
@@ -1138,8 +1225,8 @@ pub const START_PAGE_HTML: &str = r###"<!DOCTYPE html>
                             <div class="aether-pwd-actions">
                                 <span id="pwd-val-${p.id}" style="font-family:monospace; font-size:12.5px; color:#c084fc; letter-spacing:2px;">••••••••</span>
                                 <button class="aether-pwd-btn" title="Показать/скрыть" onclick="togglePasswordVisibility('${p.id}', '${p.pass.replace(/'/g, "\\'")}')">👁️</button>
-                                <button class="aether-pwd-btn" title="Скопировать пароль" onclick="navigator.clipboard.writeText('${p.pass.replace(/'/g, "\\'")}'); alert('Пароль скопирован!');">📋 Пароль</button>
-                                <button class="aether-pwd-btn" title="Скопировать логин" onclick="navigator.clipboard.writeText('${p.login.replace(/'/g, "\\'")}'); alert('Логин скопирован!');">📋 Логин</button>
+                                <button class="aether-pwd-btn" title="Скопировать пароль" onclick="navigator.clipboard.writeText('${p.pass.replace(/'/g, "\\'")}'); showToast('📋 Пароль скопирован в буфер!');">📋 Пароль</button>
+                                <button class="aether-pwd-btn" title="Скопировать логин" onclick="navigator.clipboard.writeText('${p.login.replace(/'/g, "\\'")}'); showToast('📋 Логин скопирован в буфер!');">📋 Логин</button>
                                 <button class="aether-pwd-btn" style="color:#fca5a5;" title="Удалить" onclick="deletePassword('${p.id}')">✕</button>
                             </div>
                         </div>
@@ -1160,10 +1247,12 @@ pub const START_PAGE_HTML: &str = r###"<!DOCTYPE html>
             const login = document.getElementById('np-login').value.trim();
             const pass = document.getElementById('np-pass').value.trim();
             if (!site || !login || !pass) {
-                alert('Пожалуйста, заполните все поля!');
+                showToast('⚠️ Пожалуйста, заполните все поля!');
                 return;
             }
             addPassword(site, login, pass);
+            showToast('🔑 Пароль сохранён!');
+            document.getElementById('add-pwd-form-wrap').style.display = 'none';
         }
 
         function togglePasswordVisibility(id, realPass) {
@@ -1243,6 +1332,12 @@ pub const START_PAGE_HTML: &str = r###"<!DOCTYPE html>
         }
 
         renderGrid();
+        setTimeout(() => {
+            const si = document.getElementById('aether-search-input');
+            if (si) {
+                try { si.focus({ preventScroll: true }); } catch (_) { si.focus(); }
+            }
+        }, 60);
     </script>
 </body>
 </html>"###;

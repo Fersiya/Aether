@@ -63,7 +63,7 @@ fn show_error_dialog(title: &str, message: &str) {
 }
 
 fn run_app() -> Result<(), Box<dyn std::error::Error>> {
-    log_desktop("=== Aether Browser v0.6.6: Запуск приложения ===");
+    log_desktop("=== Aether Browser v0.6.7: Запуск приложения ===");
 
     let event_loop = EventLoopBuilder::<UserEvent>::with_user_event().build();
     let proxy = event_loop.create_proxy();
@@ -73,8 +73,9 @@ fn run_app() -> Result<(), Box<dyn std::error::Error>> {
     let window_icon = Icon::from_rgba(ICON_RGBA.to_vec(), 256, 256).ok();
 
     let window = WindowBuilder::new()
-        .with_title(format!("{} v0.6.6 — Легкий медиа-браузер", APP_NAME))
+        .with_title(format!("{} v0.6.7 — Легкий медиа-браузер", APP_NAME))
         .with_window_icon(window_icon)
+        .with_maximized(true)
         .with_inner_size(tao::dpi::LogicalSize::new(1440.0, 900.0))
         .with_theme(Some(Theme::Dark))
         .build(&event_loop)?;
@@ -132,6 +133,7 @@ fn run_app() -> Result<(), Box<dyn std::error::Error>> {
     let webview = WebViewBuilder::with_web_context(&mut web_context)
         .with_clipboard(true)
         .with_devtools(true)
+        .with_background_color((7, 4, 13, 255))
         .with_custom_protocol("aether".into(), move |_id, _request| {
             let body = scripts::START_PAGE_HTML.as_bytes().to_vec();
             wry::http::Response::builder()
@@ -186,7 +188,7 @@ fn run_app() -> Result<(), Box<dyn std::error::Error>> {
 
         match event {
             Event::NewEvents(StartCause::Init) => {
-                log_desktop("[Aether v0.6.6] Готов к работе!");
+                log_desktop("[Aether v0.6.7] Готов к работе!");
             }
             Event::WindowEvent {
                 event: WindowEvent::CloseRequested,
