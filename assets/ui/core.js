@@ -8,12 +8,10 @@
     if (window.__AETHER_CORE_ATTACHED__) return;
     window.__AETHER_CORE_ATTACHED__ = true;
 
-    function logToRust(msg) {
-        if (window.ipc && window.ipc.postMessage) {
-            try { window.ipc.postMessage("log:" + msg); } catch (_) {}
-        }
+    // Отправка сообщения в Rust. Состояние вкладок хранит Rust, страница лишь шлёт намерения.
+    function post(msg) {
+        try { window.ipc.postMessage(msg); return true; } catch (_) { return false; }
     }
-    logToRust("Core script запущен на: " + window.location.href);
 
     // 1. TRUSTED TYPES CSP BYPASS (YouTube, Google, GitHub)
     let aetherPolicy = {
@@ -54,107 +52,45 @@
         } catch (_) {}
     }
 
+    // 2. СОСТОЯНИЕ ВКЛАДОК
+    // Источник истины — Rust: вкладки, быстрые карточки и счётчики визитов приходят готовым снимком
+    // (window.__AETHER_STATE__ при создании страницы, __aetherApplyState — при изменениях).
     function getStartPageUrl() {
-        return "http://aether.localhost/";
+        return window.__AETHER_GLOBAL_START_URL__ || "http://aether.localhost/";
     }
 
-    // 2. УПРАВЛЕНИЕ КАРТОЧКАМИ И ВКЛАДКАМИ
-    function getCustomCards() {
-        try {
-            if (window.name && window.name.startsWith("__AETHER_STATE__=")) {
-                const parsed = JSON.parse(window.name.substring(17));
-                if (parsed && Array.isArray(parsed.cards)) return parsed.cards;
-            }
-        } catch (_) {}
-        try {
-            const local = localStorage.getItem('aether_custom_cards');
-            if (local) {
-                const parsed = JSON.parse(local);
-                if (Array.isArray(parsed)) return parsed;
-            }
-        } catch (_) {}
-        try {
-            if (window.__AETHER_SAVED_CARDS__) {
-                const parsed = JSON.parse(window.__AETHER_SAVED_CARDS__);
-                if (Array.isArray(parsed)) return parsed;
-            }
-        } catch (_) {}
-        return [];
-    }
-
-    function saveCustomCards(cards) {
-        try { localStorage.setItem('aether_custom_cards', JSON.stringify(cards)); } catch (_) {}
-        const state = getTabsState();
-        state.cards = cards;
-        saveTabsState(state);
-        if (window.ipc && window.ipc.postMessage) {
-            try { window.ipc.postMessage("save_cards:" + JSON.stringify(cards)); } catch (_) {}
-        }
-        renderSidebar();
+    function isStartUrl(u) {
+        return !!u && (u.includes("aether.localhost") || u.includes("start.html"));
     }
 
     function getTabsState() {
-        try {
-            if (window.name && window.name.startsWith("__AETHER_STATE__=")) {
-                const json = window.name.substring(17);
-                const parsed = JSON.parse(json);
-                if (parsed && Array.isArray(parsed.tabs) && parsed.tabs.length > 0) {
-                    if (!Array.isArray(parsed.cards)) {
-                        parsed.cards = getCustomCards();
-                    }
-                    return parsed;
-                }
-            }
-        } catch (_) {}
-
-        const startUrl = window.location.href;
-        const initialTitle = (startUrl.includes("aether.localhost") || startUrl.includes("start.html")) ? "Старт" : (document.title || "Вкладка");
-        return {
-            activeTabId: 1,
-            nextTabId: 2,
-            cards: getCustomCards(),
-            tabs: [
-                { id: 1, title: initialTitle, url: startUrl }
-            ]
-        };
+        const s = window.__AETHER_STATE__;
+        return (s && Array.isArray(s.tabs)) ? s : { activeTabId: 0, tabs: [], cards: [], visits: {} };
     }
 
-    function saveTabsState(state) {
-        try {
-            window.name = "__AETHER_STATE__=" + JSON.stringify(state);
-        } catch (_) {}
+    function getCustomCards() {
+        const s = getTabsState();
+        return Array.isArray(s.cards) ? s.cards : [];
     }
 
-    function updateCurrentTabInfo() {
-        const state = getTabsState();
-        let tab = state.tabs.find(t => t.id === state.activeTabId);
-        const curUrl = window.location.href;
-        const curTitle = (curUrl.includes("aether.localhost") || curUrl.includes("start.html")) ? "Старт" : (document.title || (location.hostname.replace("www.", "") || "Вкладка"));
+    let sidebarDirty = false;
+    let lastSig = "";
+    function stateSig(s) {
+        try { return JSON.stringify([s.activeTabId, s.tabs.map(t => [t.id, t.title, t.url]), s.cards]); } catch (_) { return ""; }
+    }
 
-        // Учёт визитов на сайты для быстрых рекомендаций
-        if (!curUrl.includes("aether.localhost") && !curUrl.includes("start.html")) {
-            const domain = window.location.hostname.replace(/^www\./, '');
-            if (domain && domain.includes('.')) {
-                state.visits = state.visits || {};
-                state.visits[domain] = (state.visits[domain] || 0) + 1;
-            }
+    // Rust присылает свежее состояние. Сайдбар перерисовывается, только если он открыт, данные
+    // реально изменились и пользователь не печатает в омнибоксе; иначе — при следующем открытии.
+    window.__aetherApplyState = function (state) {
+        window.__AETHER_STATE__ = state;
+        if (stateSig(state) === lastSig) return;
+        const ob = document.getElementById('aether-sb-omnibox');
+        if (!isSidebarOpen || (ob && document.activeElement === ob)) {
+            sidebarDirty = true;
+            return;
         }
-
-        if (!tab) {
-            tab = { id: state.activeTabId, title: curTitle, url: curUrl };
-            state.tabs.push(tab);
-        } else {
-            tab.url = curUrl;
-            if (curTitle && curTitle !== "YouTube" && curTitle !== "Вкладка") {
-                tab.title = curTitle;
-            } else if (!tab.title || tab.title === "Новая вкладка") {
-                tab.title = curTitle;
-            }
-        }
-        saveTabsState(state);
-    }
-
-    updateCurrentTabInfo();
+        renderSidebar();
+    };
 
     // 3. ПЛАВАЮЩИЙ САЙДБАР ARC
     const SIDEBAR_CSS = `
@@ -558,8 +494,12 @@
 
     function openSidebar() {
         isSidebarOpen = true;
+        if (sidebarDirty) renderSidebar();
         const sidebar = document.getElementById('aether-arc-sidebar');
         if (sidebar) sidebar.classList.add('open');
+        // адрес мог измениться без перезагрузки страницы (SPA)
+        const ob = document.getElementById('aether-sb-omnibox');
+        if (ob && document.activeElement !== ob) ob.value = isStartUrl(location.href) ? "" : location.href;
     }
 
     function closeSidebar() {
@@ -612,6 +552,8 @@
         }
 
         const state = getTabsState();
+        lastSig = stateSig(state);
+        sidebarDirty = false;
 
         safeSetHTML(sidebar, `
             <div class="aether-sb-header">
@@ -1013,199 +955,78 @@
     document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
     document.addEventListener('mozfullscreenchange', handleFullscreenChange);
 
-    // 6. НАВИГАЦИЯ, ВКЛАДКИ И ПЕРЕХОД ДОМОЙ
+    // 6. НАВИГАЦИЯ И ВКЛАДКИ
+    // Страница лишь отправляет намерения — вкладками, переходами и их сохранением управляет Rust.
     function goHome() {
-        logToRust("goHome() вызван. Текущий адрес: " + window.location.href);
-        triggerLoadProgress();
-        const state = getTabsState();
-        const startTab = state.tabs.find(t => t.url && (t.url.includes("aether.localhost") || t.url.includes("start.html")));
-        if (startTab) {
-            state.activeTabId = startTab.id;
-        } else {
-            let cur = state.tabs.find(t => t.id === state.activeTabId);
-            if (cur) {
-                cur.url = getStartPageUrl();
-                cur.title = "Старт";
-            }
-        }
-        saveTabsState(state);
-
-        if (window.ipc && window.ipc.postMessage) {
-            try {
-                showLoader("Стартовая страница");
-                window.ipc.postMessage("go_home");
-                return;
-            } catch (err) {
-                logToRust("IPC go_home ошибка: " + err);
-            }
-        }
-        window.location.href = getStartPageUrl();
+        if (isStartUrl(location.href)) return;
+        // без экрана загрузки: стартовая страница отдаётся локально, а Rust может просто переключить вкладку
+        if (!post("go_home")) window.location.href = getStartPageUrl();
     }
 
     function createNewTab(url) {
-        triggerLoadProgress();
-        const state = getTabsState();
-        const targetUrl = url || getStartPageUrl();
-        const newId = state.nextTabId;
-        state.nextTabId++;
-        const title = (targetUrl.includes("aether.localhost") || targetUrl.includes("start.html")) ? "Старт" : "Новая вкладка";
-        state.tabs.push({ id: newId, title, url: targetUrl });
-        state.activeTabId = newId;
-        saveTabsState(state);
-
-        if (targetUrl.includes("aether.localhost") || targetUrl.includes("start.html")) {
-            goHome();
-            return;
-        }
-        if (window.ipc && window.ipc.postMessage) {
-            try {
-                showLoader(targetUrl);
-                window.ipc.postMessage("navigate:" + targetUrl);
-                return;
-            } catch (_) {}
-        }
-        window.location.href = targetUrl;
+        if (!post("tab_new:" + (url || ""))) window.location.href = url || getStartPageUrl();
     }
 
-    // Экспорт в глобальную область для Rust
-    window.createNewTab = createNewTab;
+    function switchTab(id) {
+        post("tab_switch:" + id);
+    }
 
-    // Перехват клика колёсиком мыши (auxclick, button=1) для открытия в новой вкладке
+    function closeTab(id) {
+        post("tab_close:" + id);
+    }
+
+    // Клик колёсиком мыши по ссылке — новая вкладка
     document.addEventListener('auxclick', (e) => {
-        if (e.button === 1) {
-            const anchor = e.target.closest('a[href]');
-            if (anchor && anchor.href && !anchor.href.startsWith('javascript:')) {
-                e.preventDefault();
-                e.stopPropagation();
-                logToRust("Клик колесиком по ссылке: " + anchor.href);
-                triggerLoadProgress();
-                createNewTab(anchor.href);
-            }
+        if (e.button !== 1) return;
+        const anchor = e.target.closest && e.target.closest('a[href]');
+        if (anchor && anchor.href && !anchor.href.startsWith('javascript:')) {
+            e.preventDefault();
+            e.stopPropagation();
+            createNewTab(anchor.href);
         }
     }, true);
 
-    // Перехват ссылок target="_blank"
+    // Ссылки target="_blank" открываются во вкладках Aether
     document.addEventListener('click', (e) => {
-        if (e.button === 0) {
-            const anchor = e.target.closest('a[href]');
-            if (anchor && anchor.target === '_blank' && anchor.href && !anchor.href.startsWith('javascript:')) {
-                e.preventDefault();
-                e.stopPropagation();
-                logToRust("target=_blank перехвачен: " + anchor.href);
-                triggerLoadProgress();
-                createNewTab(anchor.href);
-            }
+        if (e.button !== 0) return;
+        const anchor = e.target.closest && e.target.closest('a[href]');
+        if (anchor && anchor.target === '_blank' && anchor.href && !anchor.href.startsWith('javascript:')) {
+            e.preventDefault();
+            e.stopPropagation();
+            createNewTab(anchor.href);
         }
     }, true);
 
-    // Перехват window.open
+    // window.open тоже открывает вкладку
     const _origWindowOpen = window.open;
-    window.open = function(url) {
+    window.open = function (url) {
         if (url && typeof url === 'string') {
-            logToRust("window.open перехвачен: " + url);
-            triggerLoadProgress();
             createNewTab(url);
             return window;
         }
         return _origWindowOpen.apply(this, arguments);
     };
 
-    function switchTab(id) {
-        triggerLoadProgress();
-        const state = getTabsState();
-        const tab = state.tabs.find(t => t.id === id);
-        if (tab && tab.url) {
-            state.activeTabId = id;
-            saveTabsState(state);
-
-            if (tab.url.includes("aether.localhost") || tab.url.includes("start.html")) {
-                goHome();
-                return;
-            }
-            if (window.ipc && window.ipc.postMessage) {
-                try {
-                    showLoader(tab.url);
-                    window.ipc.postMessage("navigate:" + tab.url);
-                    return;
-                } catch (_) {}
-            }
-            window.location.href = tab.url;
-        }
-    }
-
-    function closeTab(id) {
-        const state = getTabsState();
-        const idx = state.tabs.findIndex(t => t.id === id);
-        if (idx !== -1) {
-            if (state.tabs.length <= 1) {
-                goHome();
-                return;
-            }
-
-            const wasActive = state.activeTabId === id;
-            state.tabs.splice(idx, 1);
-
-            if (wasActive) {
-                const nextTab = state.tabs[Math.max(0, idx - 1)] || state.tabs[0];
-                state.activeTabId = nextTab.id;
-                saveTabsState(state);
-                if (nextTab.url.includes("aether.localhost") || nextTab.url.includes("start.html")) {
-                    goHome();
-                } else {
-                    if (window.ipc && window.ipc.postMessage) {
-                        try {
-                            showLoader(nextTab.url);
-                            window.ipc.postMessage("navigate:" + nextTab.url);
-                            return;
-                        } catch (_) {}
-                    }
-                    window.location.href = nextTab.url;
-                }
-            } else {
-                saveTabsState(state);
-                renderSidebar();
-            }
-        }
-    }
-
     function openService(url) {
-        triggerLoadProgress();
-        const state = getTabsState();
         const domain = url.replace("https://", "").replace("http://", "").replace("www.", "").split('/')[0];
-        const existing = state.tabs.find(t => t.url && t.url.includes(domain));
+        const existing = getTabsState().tabs.find(t => t.url && t.url.includes(domain));
         if (existing) {
             switchTab(existing.id);
+        } else if (isStartUrl(location.href)) {
+            navigateToUrl(url);
         } else {
-            if (window.location.href.includes("aether.localhost") || window.location.href.includes("start.html")) {
-                navigateToUrl(url);
-            } else {
-                createNewTab(url);
-            }
+            createNewTab(url);
         }
     }
 
     function navigateToUrl(url) {
-        triggerLoadProgress();
-        const state = getTabsState();
-        let tab = state.tabs.find(t => t.id === state.activeTabId);
-        if (tab) {
-            tab.url = url;
-            tab.title = (url.includes("aether.localhost") || url.includes("start.html")) ? "Старт" : "Загрузка...";
-        }
-        saveTabsState(state);
-
-        if (url.includes("aether.localhost") || url.includes("start.html")) {
+        if (isStartUrl(url)) {
             goHome();
-        } else {
-            if (window.ipc && window.ipc.postMessage) {
-                try {
-                    showLoader(url);
-                    window.ipc.postMessage("navigate:" + url);
-                    return;
-                } catch (_) {}
-            }
-            window.location.href = url;
+            return;
         }
+        triggerLoadProgress();
+        showLoader(url);
+        if (!post("navigate:" + url)) window.location.href = url;
     }
 
     function handleNavigate(input) {
@@ -1270,6 +1091,7 @@
     // 8. YOUTUBE АВТО-ПРОПУСК РЕКЛАМЫ
     if (location.hostname.includes("youtube.com")) {
         setInterval(() => {
+            if (document.hidden) return; // фоновая вкладка не опрашивается
             try {
                 const skipBtn = document.querySelector('.ytp-skip-ad-button, .ytp-ad-skip-button, .ytp-ad-skip-button-modern');
                 if (skipBtn) skipBtn.click();
@@ -1330,56 +1152,31 @@
         renderSidebar();
         completeLoadProgress();
     }
-    window.addEventListener('load', () => {
-        renderSidebar();
-        completeLoadProgress();
-    });
-    window.addEventListener('yt-navigate-finish', () => {
-        updateCurrentTabInfo();
-        renderSidebar();
-        completeLoadProgress();
-    });
-    window.addEventListener('popstate', () => {
-        updateCurrentTabInfo();
-        renderSidebar();
-    });
-
-    // Слежение за заголовком страницы без опроса: MutationObserver по <head> просыпается
-    // только при реальном изменении <title> (раньше setInterval(500мс) на каждой странице).
-    let prevTitle = "";
-    let titleTimer = 0;
-    function onTitleMaybeChanged() {
-        if (titleTimer) return; // схлопываем частые изменения в один проход
-        titleTimer = setTimeout(() => {
-            titleTimer = 0;
-            if (document.title !== prevTitle) {
-                prevTitle = document.title;
-                updateCurrentTabInfo();
-                renderSidebar();
-            }
-        }, 200);
-    }
-    function watchTitle() {
-        const head = document.head;
-        if (!head) return false;
-        new MutationObserver(onTitleMaybeChanged).observe(head, {
-            childList: true,
-            subtree: true,
-            characterData: true
-        });
-        onTitleMaybeChanged();
-        return true;
-    }
-    if (!watchTitle()) {
-        const root = document.documentElement;
-        if (root) {
-            // <head> ещё не создан: ждём его появления и сразу отключаем наблюдатель
-            const rootObserver = new MutationObserver(() => {
-                if (watchTitle()) rootObserver.disconnect();
-            });
-            rootObserver.observe(root, { childList: true });
-        } else {
-            document.addEventListener('DOMContentLoaded', watchTitle, { once: true });
+    // Медиа: сообщаем Rust, играет ли во вкладке звук/видео — такие вкладки не выгружаются из памяти
+    let mediaPlaying = 0;
+    function reportMedia(flag) {
+        if (flag !== mediaPlaying) {
+            mediaPlaying = flag;
+            post("tab_media:" + flag);
         }
     }
+    function recheckMedia() {
+        let any = 0;
+        document.querySelectorAll('video,audio').forEach(m => { if (!m.paused && !m.ended) any = 1; });
+        reportMedia(any);
+    }
+    document.addEventListener('playing', () => reportMedia(1), true);
+    document.addEventListener('pause', recheckMedia, true);
+    document.addEventListener('ended', recheckMedia, true);
+
+    function onDomReady() {
+        try { renderSidebar(); } finally { completeLoadProgress(); }
+    }
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', onDomReady, { once: true });
+    } else {
+        onDomReady();
+    }
+    window.addEventListener('load', completeLoadProgress);
+    window.addEventListener('yt-navigate-finish', completeLoadProgress);
 })();

@@ -876,31 +876,21 @@
 
         // --- Управление карточками ---
         function getCustomCards() {
-            try {
-                if (window.name && window.name.startsWith("__AETHER_STATE__=")) {
-                    const parsed = JSON.parse(window.name.substring(17));
-                    if (parsed && Array.isArray(parsed.cards)) return parsed.cards;
-                }
-            } catch (_) {}
+            const s = window.__AETHER_STATE__;
+            if (s && Array.isArray(s.cards) && s.cards.length) return s.cards;
             try {
                 const local = localStorage.getItem('aether_custom_cards');
                 if (local) {
                     const parsed = JSON.parse(local);
-                    if (Array.isArray(parsed)) return parsed;
+                    if (Array.isArray(parsed) && parsed.length) return parsed;
                 }
             } catch (_) {}
-            return [];
+            return (s && Array.isArray(s.cards)) ? s.cards : [];
         }
 
         function saveCustomCards(cards) {
             try { localStorage.setItem('aether_custom_cards', JSON.stringify(cards)); } catch (_) {}
-            try {
-                if (window.name && window.name.startsWith("__AETHER_STATE__=")) {
-                    const parsed = JSON.parse(window.name.substring(17));
-                    parsed.cards = cards;
-                    window.name = "__AETHER_STATE__=" + JSON.stringify(parsed);
-                }
-            } catch (_) {}
+            if (window.__AETHER_STATE__) window.__AETHER_STATE__.cards = cards;
             if (window.ipc && window.ipc.postMessage) {
                 try { window.ipc.postMessage("save_cards:" + JSON.stringify(cards)); } catch (_) {}
             }
@@ -998,16 +988,12 @@
                 if (storedVisits) visitsMap = JSON.parse(storedVisits);
             } catch (_) {}
 
-            try {
-                if (window.name && window.name.startsWith("__AETHER_STATE__=")) {
-                    const parsed = JSON.parse(window.name.substring(17));
-                    if (parsed.visits) {
-                        for (const [k, v] of Object.entries(parsed.visits)) {
-                            visitsMap[k] = Math.max(visitsMap[k] || 0, v);
-                        }
-                    }
+            const stateVisits = window.__AETHER_STATE__ && window.__AETHER_STATE__.visits;
+            if (stateVisits) {
+                for (const [k, v] of Object.entries(stateVisits)) {
+                    visitsMap[k] = Math.max(visitsMap[k] || 0, v);
                 }
-            } catch (_) {}
+            }
 
             // Проверяем историю
             const historyList = getHistory();

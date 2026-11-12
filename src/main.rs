@@ -1,31 +1,46 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod scripts;
+mod session;
 
 use directories::{ProjectDirs, UserDirs};
+use serde_json::Value;
+use session::{CloseResult, Session, START_URL};
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, Instant};
 use tao::{
-    event::{Event, StartCause, WindowEvent},
-    event_loop::{ControlFlow, EventLoopBuilder},
-    window::{Fullscreen, Icon, Theme, WindowBuilder},
+    event::{Event, WindowEvent},
+    event_loop::{ControlFlow, EventLoopBuilder, EventLoopProxy},
+    window::{Fullscreen, Icon, Theme, Window, WindowBuilder},
 };
 #[cfg(target_os = "windows")]
 use tao::platform::windows::WindowExtWindows;
-use wry::{http::Request, WebContext, WebViewBuilder};
+use wry::{dpi, http::Request, Rect, WebContext, WebView, WebViewBuilder};
 
 const APP_NAME: &str = "Aether";
-const START_URL: &str = "http://aether.localhost/";
+const VERSION: &str = env!("CARGO_PKG_VERSION");
 const ICON_RGBA: &[u8] = include_bytes!("../assets/icon_256.rgba");
 
-#[derive(Debug, Clone)]
+/// Сколько вкладок одновременно держит «живыми» (с запущенной страницей).
+/// Остальные выгружаются (адрес и заголовок сохраняются) и открываются заново при переходе на них.
+/// Вкладки, в которых играет звук/видео, не выгружаются никогда.
+const MAX_LIVE_TABS: usize = 8;
+/// Пауза перед записью session.json и обновлением сайдбара после частых событий (смена заголовка).
+const FLUSH_DELAY: Duration = Duration::from_millis(600);
+
+#[derive(Debug)]
 enum UserEvent {
-    GoHome,
-    Navigate(String),
-    SaveCards(String),
-    SetFullscreen(bool),
-    OpenNewTab(String),
+    /// Сообщение от страницы вкладки `tab` (`trusted` — сообщение пришло со стартовой страницы Aether).
+    Ipc { tab: u32, trusted: bool, body: String },
+    /// Страница запросила новое окно (target=_blank, window.open) — открываем вкладку.
+    NewTab(String),
+    Title(u32, String),
+    Navigated(u32, String),
 }
+
+// ───────────────────────────── журнал ─────────────────────────────
 
 fn get_desktop_log_path() -> PathBuf {
     if let Some(user_dirs) = UserDirs::new() {
@@ -36,8 +51,8 @@ fn get_desktop_log_path() -> PathBuf {
     PathBuf::from("aether_debug.log")
 }
 
-/// Лог-файл открывается один раз за запуск, а не на каждую запись:
-/// JS шлёт `log:` через IPC часто, и повторные open()/close() были лишними системными вызовами.
+/// Лог-файл открывается один раз за запуск. Пишем только служебные события и ошибки —
+/// адреса посещённых сайтов в журнал не попадают.
 static LOG_FILE: OnceLock<Mutex<Option<std::fs::File>>> = OnceLock::new();
 
 pub fn log_desktop(msg: &str) {
@@ -77,27 +92,355 @@ fn show_error_dialog(title: &str, message: &str) {
         }
         MessageBoxW(0, wide_msg.as_ptr(), wide_title.as_ptr(), 0x10 /* MB_ICONERROR */);
     }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = (title, message);
+    }
 }
 
+// ───────────────────────────── приложение ─────────────────────────────
+
+/// Живая вкладка: отдельный WebView, который просто скрывается при переключении.
+struct View {
+    wv: WebView,
+    last_used: u64,
+    playing: bool,
+}
+
+struct App {
+    window: Window,
+    web_context: WebContext,
+    proxy: EventLoopProxy<UserEvent>,
+    session: Session,
+    views: HashMap<u32, View>,
+    tick: u64,
+    cards_path: PathBuf,
+    session_path: PathBuf,
+    last_saved: String,
+    flush_at: Option<Instant>,
+}
+
+impl App {
+    fn bounds(&self) -> Rect {
+        let s = self.window.inner_size();
+        Rect {
+            position: dpi::PhysicalPosition::new(0, 0).into(),
+            size: dpi::PhysicalSize::new(s.width, s.height).into(),
+        }
+    }
+
+    /// Создаёт WebView для вкладки `id` и загружает `url`.
+    fn create_view(&mut self, id: u32, url: &str) -> bool {
+        let script = scripts::get_core_script(START_URL, &self.session.state_json());
+        let bounds = self.bounds();
+        let ipc_proxy = self.proxy.clone();
+        let window_proxy = self.proxy.clone();
+        let title_proxy = self.proxy.clone();
+        let nav_proxy = self.proxy.clone();
+
+        let built = WebViewBuilder::with_web_context(&mut self.web_context)
+            .with_bounds(bounds)
+            .with_clipboard(true)
+            .with_devtools(true)
+            .with_background_color((7, 4, 13, 255))
+            .with_custom_protocol("aether".into(), move |_id, _request| {
+                let body = scripts::START_PAGE_HTML.as_bytes().to_vec();
+                wry::http::Response::builder()
+                    .header(wry::http::header::CONTENT_TYPE, "text/html; charset=utf-8")
+                    .header("Access-Control-Allow-Origin", "*")
+                    .body(std::borrow::Cow::Owned(body))
+                    .unwrap()
+            })
+            .with_initialization_script(&script)
+            .with_new_window_req_handler(move |url| {
+                let _ = window_proxy.send_event(UserEvent::NewTab(url));
+                false
+            })
+            .with_document_title_changed_handler(move |title| {
+                let _ = title_proxy.send_event(UserEvent::Title(id, title));
+            })
+            .with_navigation_handler(move |url| {
+                let _ = nav_proxy.send_event(UserEvent::Navigated(id, url));
+                true
+            })
+            .with_ipc_handler(move |req: Request<String>| {
+                // uri запроса — адрес страницы-отправителя: так отличаем свою стартовую страницу от чужих сайтов
+                let trusted = req.uri().host() == Some("aether.localhost");
+                let _ = ipc_proxy.send_event(UserEvent::Ipc { tab: id, trusted, body: req.into_body() });
+            })
+            .with_url(url)
+            .build_as_child(&self.window);
+
+        match built {
+            Ok(wv) => {
+                self.tick += 1;
+                self.views.insert(id, View { wv, last_used: self.tick, playing: false });
+                true
+            }
+            Err(e) => {
+                log_desktop(&format!("Не удалось создать WebView вкладки {}: {:?}", id, e));
+                false
+            }
+        }
+    }
+
+    /// Подтягивает актуальный адрес из вебвью (SPA меняют URL без перезагрузки).
+    fn refresh_url(&mut self, id: u32) {
+        let current = self.views.get(&id).and_then(|v| v.wv.url().ok());
+        if let Some(url) = current {
+            self.session.sync_url(id, &url);
+        }
+    }
+
+    /// Делает вкладку активной: прячет прежнюю (она остаётся живой), показывает выбранную;
+    /// выгруженную вкладку создаёт заново.
+    fn activate(&mut self, id: u32) {
+        let Some(url) = self.session.url_of(id) else { return };
+
+        let prev = self.session.active;
+        if prev != id {
+            self.refresh_url(prev);
+            if let Some(v) = self.views.get(&prev) {
+                let _ = v.wv.set_visible(false);
+            }
+        }
+        self.session.active = id;
+
+        if !self.views.contains_key(&id) && !self.create_view(id, &url) {
+            return;
+        }
+
+        self.tick += 1;
+        let bounds = self.bounds();
+        if let Some(v) = self.views.get_mut(&id) {
+            v.last_used = self.tick;
+            let _ = v.wv.set_bounds(bounds);
+            let _ = v.wv.set_visible(true);
+            let _ = v.wv.focus();
+        }
+
+        self.evict();
+        self.push_state();
+        self.save_now();
+    }
+
+    /// Выгружает самые давние неактивные вкладки сверх лимита (кроме играющих медиа).
+    fn evict(&mut self) {
+        while self.views.len() > MAX_LIVE_TABS {
+            let active = self.session.active;
+            let victim = self
+                .views
+                .iter()
+                .filter(|(id, v)| **id != active && !v.playing)
+                .min_by_key(|(_, v)| v.last_used)
+                .map(|(id, _)| *id);
+            match victim {
+                Some(id) => {
+                    self.refresh_url(id);
+                    self.views.remove(&id);
+                }
+                None => break,
+            }
+        }
+    }
+
+    fn new_tab(&mut self, url: &str) {
+        let url = if url.trim().is_empty() {
+            START_URL.to_string()
+        } else {
+            session::normalize_url(url)
+        };
+        let id = self.session.add_tab(&url);
+        self.activate(id);
+    }
+
+    fn close_tab(&mut self, id: u32) {
+        match self.session.close(id) {
+            CloseResult::NotFound => {}
+            CloseResult::ResetToStart => {
+                match self.views.get(&id) {
+                    Some(v) => {
+                        let _ = v.wv.load_url(START_URL);
+                    }
+                    None => {
+                        self.activate(id);
+                        return;
+                    }
+                }
+                self.push_state();
+                self.save_now();
+            }
+            CloseResult::Removed { was_active } => {
+                self.views.remove(&id);
+                if was_active {
+                    let next = self.session.active;
+                    self.activate(next);
+                } else {
+                    self.push_state();
+                    self.save_now();
+                }
+            }
+        }
+    }
+
+    fn navigate(&mut self, id: u32, raw: &str) {
+        let url = session::normalize_url(raw);
+        if let Some(v) = self.views.get(&id) {
+            self.session.begin_nav(id, &url);
+            let _ = v.wv.load_url(&url);
+            self.push_state();
+            self.save_now();
+        }
+    }
+
+    fn go_home(&mut self, sender: u32) {
+        match self.session.start_tab() {
+            Some(start) if start != sender => self.activate(start),
+            Some(_) => {}
+            None => self.navigate(sender, START_URL),
+        }
+    }
+
+    /// Передаёт актуальное состояние активной странице (сайдбар перерисуется, только если он открыт).
+    fn push_state(&self) {
+        if let Some(v) = self.views.get(&self.session.active) {
+            let js = format!(
+                "window.__aetherApplyState&&window.__aetherApplyState({})",
+                self.session.state_json()
+            );
+            let _ = v.wv.evaluate_script(&js);
+        }
+    }
+
+    fn save_now(&mut self) {
+        let json = self.session.to_json();
+        if json.is_empty() || json == self.last_saved {
+            return;
+        }
+        let tmp = self.session_path.with_extension("json.tmp");
+        if std::fs::write(&tmp, &json).is_ok() && std::fs::rename(&tmp, &self.session_path).is_ok() {
+            self.last_saved = json;
+        }
+    }
+
+    fn schedule_flush(&mut self) {
+        if self.flush_at.is_none() {
+            self.flush_at = Some(Instant::now() + FLUSH_DELAY);
+        }
+    }
+
+    fn flush(&mut self) {
+        self.flush_at = None;
+        let active = self.session.active;
+        self.refresh_url(active);
+        self.push_state();
+        self.save_now();
+    }
+
+    fn on_resize(&self) {
+        let s = self.window.inner_size();
+        if s.width == 0 || s.height == 0 {
+            return; // окно свёрнуто
+        }
+        if let Some(v) = self.views.get(&self.session.active) {
+            let _ = v.wv.set_bounds(self.bounds());
+        }
+    }
+
+    fn focus_active(&self) {
+        if let Some(v) = self.views.get(&self.session.active) {
+            let _ = v.wv.focus();
+        }
+    }
+
+    fn shutdown(&mut self) {
+        let active = self.session.active;
+        self.refresh_url(active);
+        self.save_now();
+    }
+
+    fn on_user_event(&mut self, event: UserEvent) {
+        match event {
+            UserEvent::Ipc { tab, trusted, body } => self.on_ipc(tab, trusted, body.trim()),
+            UserEvent::NewTab(url) => self.new_tab(&url),
+            UserEvent::Title(id, title) => {
+                self.session.set_title(id, &title);
+                self.schedule_flush();
+            }
+            UserEvent::Navigated(id, url) => {
+                self.session.on_navigated(id, &url);
+                self.schedule_flush();
+            }
+        }
+    }
+
+    fn on_ipc(&mut self, tab: u32, trusted: bool, body: &str) {
+        if body == "go_home" {
+            self.go_home(tab);
+        } else if let Some(url) = body.strip_prefix("navigate:") {
+            self.navigate(tab, url);
+        } else if let Some(url) = body.strip_prefix("tab_new:") {
+            self.new_tab(url);
+        } else if let Some(id) = body.strip_prefix("tab_switch:") {
+            if let Ok(id) = id.trim().parse::<u32>() {
+                self.activate(id);
+            }
+        } else if let Some(id) = body.strip_prefix("tab_close:") {
+            if let Ok(id) = id.trim().parse::<u32>() {
+                self.close_tab(id);
+            }
+        } else if let Some(flag) = body.strip_prefix("tab_media:") {
+            if let Some(v) = self.views.get_mut(&tab) {
+                v.playing = flag.trim() == "1";
+            }
+        } else if let Some(enabled) = body.strip_prefix("set_fullscreen:") {
+            if tab == self.session.active {
+                let fs = enabled.trim() == "true";
+                self.window.set_fullscreen(if fs { Some(Fullscreen::Borderless(None)) } else { None });
+            }
+        } else if let Some(json) = body.strip_prefix("save_cards:") {
+            // Карточки может менять только стартовая страница Aether, но не сторонние сайты
+            if trusted {
+                if let Ok(cards) = serde_json::from_str::<Value>(json) {
+                    self.session.set_cards(cards);
+                    let _ = std::fs::write(&self.cards_path, json);
+                    self.push_state();
+                }
+            }
+        } else if body == "open_log_in_explorer" {
+            #[cfg(target_os = "windows")]
+            if trusted {
+                let _ = std::process::Command::new("explorer")
+                    .arg(format!("/select,{}", get_desktop_log_path().display()))
+                    .spawn();
+            }
+        } else if let Some(msg) = body.strip_prefix("log:") {
+            if trusted {
+                log_desktop(&format!("[JS] {}", msg.chars().take(500).collect::<String>()));
+            }
+        }
+    }
+}
+
+// ───────────────────────────── запуск ─────────────────────────────
+
 fn run_app() -> Result<(), Box<dyn std::error::Error>> {
-    log_desktop("=== Aether Browser v0.6.10: Запуск приложения ===");
+    log_desktop(&format!("=== Aether Browser v{}: запуск ===", VERSION));
 
     let event_loop = EventLoopBuilder::<UserEvent>::with_user_event().build();
     let proxy = event_loop.create_proxy();
-    let new_window_proxy = proxy.clone();
 
-    // 1. Создаем нативное окно через Tao с глубокой тёмной темой и качественной иконкой
     let window_icon = Icon::from_rgba(ICON_RGBA.to_vec(), 256, 256).ok();
 
     let window = WindowBuilder::new()
-        .with_title(format!("{} v0.6.10", APP_NAME))
+        .with_title(format!("{} v{}", APP_NAME, VERSION))
         .with_window_icon(window_icon)
         .with_maximized(true)
         .with_inner_size(tao::dpi::LogicalSize::new(1440.0, 900.0))
         .with_theme(Some(Theme::Dark))
         .build(&event_loop)?;
 
-    // 1.1 Тёмная полоса заголовка Windows DWM
+    // Тёмная полоса заголовка Windows DWM
     #[cfg(target_os = "windows")]
     unsafe {
         extern "system" {
@@ -119,135 +462,67 @@ fn run_app() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    // 2. Каталог профиля для сохранения всех сессий, куки и истории
+    // Каталог профиля: куки, сессии сайтов, карточки и session.json (вкладки)
     let profile_dir = if let Some(proj_dirs) = ProjectDirs::from("com", "aether", "AetherBrowser") {
-        let dir = proj_dirs.data_dir().to_path_buf();
-        std::fs::create_dir_all(&dir).ok();
-        dir
+        proj_dirs.data_dir().to_path_buf()
     } else {
-        let dir = PathBuf::from("./aether_profile");
-        std::fs::create_dir_all(&dir).ok();
-        dir
+        PathBuf::from("./aether_profile")
+    };
+    std::fs::create_dir_all(&profile_dir).ok();
+
+    let cards_path = profile_dir.join("cards.json");
+    let cards: Value = std::fs::read_to_string(&cards_path)
+        .ok()
+        .and_then(|s| serde_json::from_str::<Value>(&s).ok())
+        .filter(|v| v.is_array())
+        .unwrap_or_else(|| Value::Array(Vec::new()));
+
+    let session_path = profile_dir.join("session.json");
+    let session = Session::load(&session_path, cards);
+    log_desktop(&format!("Восстановлено вкладок: {}", session.tabs.len()));
+
+    let mut app = App {
+        window,
+        web_context: WebContext::new(Some(profile_dir)),
+        proxy,
+        session,
+        views: HashMap::new(),
+        tick: 0,
+        cards_path,
+        session_path,
+        last_saved: String::new(),
+        flush_at: None,
     };
 
-    log_desktop(&format!("Profile dir: {:?}", profile_dir));
+    // Открываем только активную вкладку — остальные оживут при первом переходе на них
+    let active = app.session.active;
+    app.activate(active);
+    if app.views.is_empty() {
+        return Err("не удалось создать окно просмотра (WebView2)".into());
+    }
 
-    // 2.1 Загружаем сохраненные пользовательские карточки
-    let cards_json_path = profile_dir.join("cards.json");
-    let saved_cards = if cards_json_path.exists() {
-        std::fs::read_to_string(&cards_json_path).unwrap_or_else(|_| "[]".to_string())
-    } else {
-        "[]".to_string()
-    };
-
-    let mut web_context = WebContext::new(Some(profile_dir));
-    let core_script = scripts::get_core_script(START_URL, &saved_cards);
-
-    // 3. Инициализируем рендерер Wry с протоколом aether и IPC
-    let ipc_proxy = proxy.clone();
-    let cards_file_ipc = cards_json_path.clone();
-
-    let webview = WebViewBuilder::with_web_context(&mut web_context)
-        .with_clipboard(true)
-        .with_devtools(true)
-        .with_background_color((7, 4, 13, 255))
-        .with_custom_protocol("aether".into(), move |_id, _request| {
-            let body = scripts::START_PAGE_HTML.as_bytes().to_vec();
-            wry::http::Response::builder()
-                .header(wry::http::header::CONTENT_TYPE, "text/html; charset=utf-8")
-                .header("Access-Control-Allow-Origin", "*")
-                .body(std::borrow::Cow::Owned(body))
-                .unwrap()
-        })
-        .with_initialization_script(&core_script)
-        .with_new_window_req_handler(move |url| {
-            log_desktop(&format!("with_new_window_req_handler: перехвачен запрос нового окна: {}", url));
-            let _ = new_window_proxy.send_event(UserEvent::OpenNewTab(url));
-            false
-        })
-        .with_ipc_handler(move |req: Request<String>| {
-            let body = req.body().trim();
-            if body == "go_home" {
-                log_desktop("IPC handler: go_home");
-                ipc_proxy.send_event(UserEvent::GoHome).ok();
-            } else if let Some(url) = body.strip_prefix("navigate:") {
-                log_desktop(&format!("IPC handler: navigate to {}", url));
-                ipc_proxy.send_event(UserEvent::Navigate(url.to_string())).ok();
-            } else if let Some(json) = body.strip_prefix("save_cards:") {
-                log_desktop("IPC handler: save_cards");
-                let _ = std::fs::write(&cards_file_ipc, json);
-                ipc_proxy.send_event(UserEvent::SaveCards(json.to_string())).ok();
-            } else if let Some(fs_val) = body.strip_prefix("set_fullscreen:") {
-                let enabled = fs_val.trim() == "true";
-                log_desktop(&format!("IPC handler: set_fullscreen({})", enabled));
-                ipc_proxy.send_event(UserEvent::SetFullscreen(enabled)).ok();
-            } else if body == "open_log_in_explorer" {
-                let log_path = get_desktop_log_path();
-                log_desktop(&format!("IPC handler: открытие проводника с выделением файла {:?}", log_path));
-                #[cfg(target_os = "windows")]
-                {
-                    let _ = std::process::Command::new("explorer")
-                        .arg(format!("/select,{}", log_path.display()))
-                        .spawn();
-                }
-            } else if let Some(log_msg) = body.strip_prefix("log:") {
-                log_desktop(&format!("[JS] {}", log_msg));
-            }
-        })
-        .with_url(START_URL)
-        .build(&window)?;
-
-    log_desktop(&format!("WebView2 инициализирован. Загружен START_URL: {}", START_URL));
-
-    // 4. Главный цикл событий
     event_loop.run(move |event, _, control_flow| {
         *control_flow = ControlFlow::Wait;
 
         match event {
-            Event::NewEvents(StartCause::Init) => {
-                log_desktop("[Aether v0.6.10] Готов к работе!");
-            }
-            Event::WindowEvent {
-                event: WindowEvent::CloseRequested,
-                ..
-            } => {
-                log_desktop("Окно закрыто пользователем. Завершение работы.");
+            Event::WindowEvent { event: WindowEvent::CloseRequested, .. } => {
+                app.shutdown();
                 *control_flow = ControlFlow::Exit;
             }
-            Event::UserEvent(user_event) => {
-                match user_event {
-                    UserEvent::GoHome => {
-                        log_desktop("UserEvent::GoHome -> webview.load_url(http://aether.localhost/)");
-                        let res = webview.load_url(START_URL);
-                        log_desktop(&format!("load_url результат: {:?}", res));
-                    }
-                    UserEvent::Navigate(target_url) => {
-                        let valid_url = if target_url.starts_with("http://") || target_url.starts_with("https://") || target_url.starts_with("aether://") {
-                            target_url
-                        } else {
-                            format!("https://{}", target_url)
-                        };
-                        log_desktop(&format!("UserEvent::Navigate -> webview.load_url({})", valid_url));
-                        let res = webview.load_url(&valid_url);
-                        log_desktop(&format!("load_url результат: {:?}", res));
-                    }
-                    UserEvent::SetFullscreen(enabled) => {
-                        log_desktop(&format!("UserEvent::SetFullscreen({})", enabled));
-                        if enabled {
-                            window.set_fullscreen(Some(Fullscreen::Borderless(None)));
-                        } else {
-                            window.set_fullscreen(None);
-                        }
-                    }
-                    UserEvent::OpenNewTab(url) => {
-                        log_desktop(&format!("UserEvent::OpenNewTab({})", url));
-                        let script = format!("if (typeof createNewTab === 'function') {{ createNewTab({:?}); }} else {{ window.location.href = {:?}; }}", url, url);
-                        let _ = webview.evaluate_script(&script);
-                    }
-                    UserEvent::SaveCards(_) => {}
+            Event::WindowEvent { event: WindowEvent::Resized(_), .. } => app.on_resize(),
+            Event::WindowEvent { event: WindowEvent::Focused(true), .. } => app.focus_active(),
+            Event::UserEvent(ev) => app.on_user_event(ev),
+            _ => {}
+        }
+
+        if !matches!(*control_flow, ControlFlow::Exit) {
+            if let Some(at) = app.flush_at {
+                if Instant::now() >= at {
+                    app.flush();
+                } else {
+                    *control_flow = ControlFlow::WaitUntil(at);
                 }
             }
-            _ => (),
         }
     });
 }

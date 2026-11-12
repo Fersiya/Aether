@@ -1,4 +1,4 @@
-//! Встроенный рантайм Aether Browser v0.6.10 (Arc / Zen Style).
+//! Встроенный рантайм Aether Browser v0.7.0 (Arc / Zen Style).
 //!
 //! HTML стартовой страницы и ядро JS лежат в `assets/ui/` и вшиваются в бинарник
 //! на этапе компиляции через `include_str!` — в рантайме это те же `&'static str`,
@@ -23,9 +23,11 @@ pub const START_PAGE_HTML: &str = include_str!("../assets/ui/start.html");
 /// Ядро браузера: вкладки, сайдбар, омнибокс, медиа-меню. Внедряется в каждую страницу.
 pub const AETHER_CORE_SCRIPT: &str = include_str!("../assets/ui/core.js");
 
-pub fn get_core_script(start_url: &str, saved_cards_json: &str) -> String {
+/// Скрипт для каждой страницы: адрес стартовой страницы, снимок состояния вкладок и ядро UI.
+/// `state_json` — JSON из `Session::state_json()`.
+pub fn get_core_script(start_url: &str, state_json: &str) -> String {
     format!(
-        "window.__AETHER_GLOBAL_START_URL__ = {:?};\nwindow.__AETHER_SAVED_CARDS__ = {:?};\n{}",
-        start_url, saved_cards_json, AETHER_CORE_SCRIPT
+        "window.__AETHER_GLOBAL_START_URL__ = {:?};\nwindow.__AETHER_STATE__ = {};\n{}",
+        start_url, state_json, AETHER_CORE_SCRIPT
     )
 }
