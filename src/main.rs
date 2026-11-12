@@ -4,6 +4,7 @@ mod scripts;
 
 use directories::{ProjectDirs, UserDirs};
 use std::path::PathBuf;
+use std::sync::{Mutex, OnceLock};
 use tao::{
     event::{Event, StartCause, WindowEvent},
     event_loop::{ControlFlow, EventLoopBuilder},
@@ -35,16 +36,32 @@ fn get_desktop_log_path() -> PathBuf {
     PathBuf::from("aether_debug.log")
 }
 
+/// Лог-файл открывается один раз за запуск, а не на каждую запись:
+/// JS шлёт `log:` через IPC часто, и повторные open()/close() были лишними системными вызовами.
+static LOG_FILE: OnceLock<Mutex<Option<std::fs::File>>> = OnceLock::new();
+
 pub fn log_desktop(msg: &str) {
+    use std::io::Write;
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs();
     let line = format!("[time: {}] {}\r\n", now, msg);
+    #[cfg(debug_assertions)]
     eprintln!("{}", line.trim());
-    if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(get_desktop_log_path()) {
-        use std::io::Write;
-        let _ = file.write_all(line.as_bytes());
+    let cell = LOG_FILE.get_or_init(|| {
+        Mutex::new(
+            std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(get_desktop_log_path())
+                .ok(),
+        )
+    });
+    if let Ok(mut guard) = cell.lock() {
+        if let Some(file) = guard.as_mut() {
+            let _ = file.write_all(line.as_bytes());
+        }
     }
 }
 
