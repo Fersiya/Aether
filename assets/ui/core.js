@@ -828,6 +828,7 @@
     }
 
     function completeLoadProgress() {
+        scheduleHideLoader();
         const bar = document.getElementById('aether-progress-bar');
         if (bar) {
             bar.style.width = '100%';
@@ -837,6 +838,136 @@
             }, 150);
         }
     }
+
+    // Фирменный экран загрузки Aether. Показывается при переходах, запущенных самим браузером
+    // (омнибокс, карточки, вкладки, «домой»), чтобы вместо белой вспышки был тёмный экран в стиле Aether.
+    // Стили только через CSSOM и Web Animations API — работает даже на сайтах со строгим CSP.
+    const LOADER_ID = 'aether-loader';
+    const IS_START_HOST = /(^|\.)aether\.localhost$/.test(location.hostname);
+    let loaderEl = null;
+    let loaderHideTimer = 0;
+    let loaderSafetyTimer = 0;
+
+    function loaderHostLabel(target) {
+        try {
+            if (!target) return "";
+            const u = new URL(target, location.href);
+            return u.hostname.replace(/^www\./, "") || String(target);
+        } catch (_) {
+            return String(target || "");
+        }
+    }
+
+    function buildLoader(label) {
+        const root = document.createElement('div');
+        root.id = LOADER_ID;
+        root.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;z-index:2147483646;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:20px;'
+            + 'background:radial-gradient(ellipse at 50% 32%,#2a1150 0%,#120a22 48%,#07040d 100%);opacity:1;transition:opacity .22s ease;'
+            + 'font-family:"Segoe UI",system-ui,sans-serif;margin:0;padding:0;border:0;';
+
+        const orb = document.createElement('div');
+        orb.style.cssText = 'position:relative;width:96px;height:96px;display:flex;align-items:center;justify-content:center;';
+
+        const ring = document.createElement('div');
+        ring.style.cssText = 'position:absolute;top:0;left:0;right:0;bottom:0;border-radius:50%;border:2px solid transparent;border-top-color:#c084fc;border-right-color:#38bdf8;box-sizing:border-box;';
+
+        const logo = document.createElement('div');
+        logo.style.cssText = 'width:60px;height:60px;border-radius:16px;box-shadow:0 0 26px rgba(168,85,247,.55);';
+        safeSetHTML(logo,
+            '<svg viewBox="0 0 100 100" width="60" height="60" fill="none" xmlns="http://www.w3.org/2000/svg">'
+            + '<rect width="100" height="100" rx="26" fill="url(#aeLoadBg)"/>'
+            + '<rect x="2" y="2" width="96" height="96" rx="24" stroke="url(#aeLoadGlow)" stroke-width="3"/>'
+            + '<ellipse cx="50" cy="50" rx="38" ry="18" stroke="#38bdf8" stroke-width="2.5" opacity="0.85" transform="rotate(-25 50 50)"/>'
+            + '<path d="M38 72L50 28L62 72M42 58H58" stroke="#f8fafc" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round"/>'
+            + '<circle cx="72" cy="28" r="3.5" fill="#ffffff"/>'
+            + '<defs><linearGradient id="aeLoadBg" x1="0" y1="0" x2="100" y2="100" gradientUnits="userSpaceOnUse"><stop stop-color="#180730"/><stop offset="0.5" stop-color="#4c1d95"/><stop offset="1" stop-color="#7c3aed"/></linearGradient>'
+            + '<linearGradient id="aeLoadGlow" x1="0" y1="0" x2="100" y2="100" gradientUnits="userSpaceOnUse"><stop stop-color="#c084fc"/><stop offset="1" stop-color="#38bdf8"/></linearGradient></defs></svg>');
+
+        const title = document.createElement('div');
+        title.textContent = 'AETHER';
+        title.style.cssText = 'font-size:15px;font-weight:700;letter-spacing:.5em;text-indent:.5em;color:#d8b4fe;';
+
+        const track = document.createElement('div');
+        track.style.cssText = 'position:relative;width:150px;height:3px;border-radius:3px;background:rgba(168,85,247,.18);overflow:hidden;';
+        const slider = document.createElement('div');
+        slider.style.cssText = 'position:absolute;top:0;left:0;width:45%;height:100%;border-radius:3px;background:linear-gradient(90deg,#9333ea,#a855f7,#38bdf8);box-shadow:0 0 10px rgba(192,132,252,.8);';
+        track.appendChild(slider);
+
+        const sub = document.createElement('div');
+        sub.textContent = label ? ('Загрузка · ' + label) : 'Загрузка…';
+        sub.style.cssText = 'font-size:12px;color:#8b7bb0;max-width:70vw;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
+
+        orb.appendChild(ring);
+        orb.appendChild(logo);
+        root.appendChild(orb);
+        root.appendChild(title);
+        root.appendChild(track);
+        root.appendChild(sub);
+
+        try {
+            if (typeof ring.animate === 'function') {
+                ring.animate([{ transform: 'rotate(0deg)' }, { transform: 'rotate(360deg)' }], { duration: 1100, iterations: Infinity, easing: 'linear' });
+                logo.animate([{ transform: 'scale(1)' }, { transform: 'scale(1.07)' }, { transform: 'scale(1)' }], { duration: 1600, iterations: Infinity, easing: 'ease-in-out' });
+                slider.animate([{ transform: 'translateX(-100%)' }, { transform: 'translateX(320%)' }], { duration: 1300, iterations: Infinity, easing: 'ease-in-out' });
+            }
+        } catch (_) {}
+        return root;
+    }
+
+    function attachLoader() {
+        const host = document.documentElement;
+        if (!host || !loaderEl) return false;
+        if (!loaderEl.isConnected) host.appendChild(loaderEl);
+        return true;
+    }
+
+    function removeLoaderNow() {
+        clearTimeout(loaderHideTimer);
+        clearTimeout(loaderSafetyTimer);
+        loaderHideTimer = 0;
+        loaderSafetyTimer = 0;
+        const el = loaderEl;
+        loaderEl = null;
+        if (el && el.isConnected) {
+            el.style.opacity = '0';
+            el.style.pointerEvents = 'none';
+            setTimeout(() => { try { el.remove(); } catch (_) {} }, 260);
+        }
+    }
+
+    function showLoader(target) {
+        try {
+            clearTimeout(loaderHideTimer);
+            loaderHideTimer = 0;
+            if (!loaderEl) loaderEl = buildLoader(loaderHostLabel(target));
+            if (!attachLoader()) {
+                const mo = new MutationObserver(() => { if (attachLoader()) mo.disconnect(); });
+                mo.observe(document, { childList: true });
+            }
+            // Страховка: если переход не состоялся, экран не должен зависнуть
+            clearTimeout(loaderSafetyTimer);
+            loaderSafetyTimer = setTimeout(removeLoaderNow, 8000);
+        } catch (_) {}
+    }
+
+    function scheduleHideLoader() {
+        if (!loaderEl || loaderHideTimer) return;
+        // Небольшая пауза после DOMContentLoaded, чтобы страница успела отрисовать первый кадр
+        loaderHideTimer = setTimeout(removeLoaderNow, 300);
+    }
+
+    window.__aetherShowLoader = showLoader;
+
+    // Новый документ открыт переходом, который запустил Aether (нет referrer, это не перезагрузка и не стартовая):
+    // показываем экран загрузки сразу, до первой отрисовки страницы.
+    (() => {
+        try {
+            if (IS_START_HOST) return;
+            let navType = 'navigate';
+            try { navType = performance.getEntriesByType('navigation')[0].type || 'navigate'; } catch (_) {}
+            if (navType === 'navigate' && !document.referrer) showLoader(location.href);
+        } catch (_) {}
+    })();
 
     // Обработка полноэкранного режима HTML5 видео и скрытия панели задач Windows
     function handleFullscreenChange() {
@@ -882,6 +1013,7 @@
 
         if (window.ipc && window.ipc.postMessage) {
             try {
+                showLoader("Стартовая страница");
                 window.ipc.postMessage("go_home");
                 return;
             } catch (err) {
@@ -908,6 +1040,7 @@
         }
         if (window.ipc && window.ipc.postMessage) {
             try {
+                showLoader(targetUrl);
                 window.ipc.postMessage("navigate:" + targetUrl);
                 return;
             } catch (_) {}
@@ -972,6 +1105,7 @@
             }
             if (window.ipc && window.ipc.postMessage) {
                 try {
+                    showLoader(tab.url);
                     window.ipc.postMessage("navigate:" + tab.url);
                     return;
                 } catch (_) {}
@@ -1001,6 +1135,7 @@
                 } else {
                     if (window.ipc && window.ipc.postMessage) {
                         try {
+                            showLoader(nextTab.url);
                             window.ipc.postMessage("navigate:" + nextTab.url);
                             return;
                         } catch (_) {}
@@ -1045,6 +1180,7 @@
         } else {
             if (window.ipc && window.ipc.postMessage) {
                 try {
+                    showLoader(url);
                     window.ipc.postMessage("navigate:" + url);
                     return;
                 } catch (_) {}

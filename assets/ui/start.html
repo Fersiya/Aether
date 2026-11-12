@@ -824,6 +824,7 @@
             log("Стартовая страница навигация к: " + dest);
             if (window.ipc && window.ipc.postMessage) {
                 try {
+                    if (window.__aetherShowLoader) window.__aetherShowLoader(dest);
                     window.ipc.postMessage("navigate:" + dest);
                     return;
                 } catch (_) {}
