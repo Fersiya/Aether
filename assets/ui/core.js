@@ -863,7 +863,7 @@
         root.id = LOADER_ID;
         root.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;z-index:2147483646;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:20px;'
             + 'background:radial-gradient(ellipse at 50% 32%,#2a1150 0%,#120a22 48%,#07040d 100%);opacity:1;transition:opacity .22s ease;'
-            + 'font-family:"Segoe UI",system-ui,sans-serif;margin:0;padding:0;border:0;';
+            + 'font-family:"Segoe UI",system-ui,sans-serif;margin:0;padding:0;border:0;pointer-events:none;';
 
         const orb = document.createElement('div');
         orb.style.cssText = 'position:relative;width:96px;height:96px;display:flex;align-items:center;justify-content:center;';
@@ -935,25 +935,31 @@
         }
     }
 
-    function showLoader(target) {
+    let loaderShownAt = 0;
+
+    // cap — максимум, сколько экран может висеть, если страница так и не сообщила о готовности.
+    // Для старой страницы (пока идёт сетевой запрос) он длиннее, для новой — короткий.
+    function showLoader(target, cap) {
         try {
             clearTimeout(loaderHideTimer);
             loaderHideTimer = 0;
-            if (!loaderEl) loaderEl = buildLoader(loaderHostLabel(target));
+            if (!loaderEl) {
+                loaderEl = buildLoader(loaderHostLabel(target));
+                loaderShownAt = Date.now();
+            }
             if (!attachLoader()) {
                 const mo = new MutationObserver(() => { if (attachLoader()) mo.disconnect(); });
                 mo.observe(document, { childList: true });
             }
-            // Страховка: если переход не состоялся, экран не должен зависнуть
             clearTimeout(loaderSafetyTimer);
-            loaderSafetyTimer = setTimeout(removeLoaderNow, 8000);
+            loaderSafetyTimer = setTimeout(removeLoaderNow, cap || 8000);
         } catch (_) {}
     }
 
     function scheduleHideLoader() {
         if (!loaderEl || loaderHideTimer) return;
-        // Небольшая пауза после DOMContentLoaded, чтобы страница успела отрисовать первый кадр
-        loaderHideTimer = setTimeout(removeLoaderNow, 300);
+        // Минимум 220 мс на экране, чтобы не мигал, и сразу прячем — без дополнительных пауз
+        loaderHideTimer = setTimeout(removeLoaderNow, Math.max(0, 220 - (Date.now() - loaderShownAt)));
     }
 
     window.__aetherShowLoader = showLoader;
@@ -965,7 +971,20 @@
             if (IS_START_HOST) return;
             let navType = 'navigate';
             try { navType = performance.getEntriesByType('navigation')[0].type || 'navigate'; } catch (_) {}
-            if (navType === 'navigate' && !document.referrer) showLoader(location.href);
+            if (navType !== 'navigate' || document.referrer) return;
+            showLoader(location.href, 1500);
+            // Прячем при готовности DOM либо через 0.7 с после появления <body> —
+            // тяжёлые сайты (YouTube) начинают рисоваться раньше DOMContentLoaded.
+            document.addEventListener('DOMContentLoaded', scheduleHideLoader, { once: true });
+            const armBody = () => {
+                if (!document.body) return false;
+                setTimeout(scheduleHideLoader, 700);
+                return true;
+            };
+            if (!armBody()) {
+                const mo = new MutationObserver(() => { if (armBody()) mo.disconnect(); });
+                mo.observe(document, { childList: true, subtree: true });
+            }
         } catch (_) {}
     })();
 

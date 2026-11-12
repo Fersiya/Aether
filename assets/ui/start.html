@@ -31,7 +31,8 @@
             display: flex;
             flex-direction: column;
             align-items: center;
-            justify-content: flex-start;
+            justify-content: center;
+            justify-content: safe center; /* по центру, а если контента много — прижимается к верху без обрезки */
             padding: 30px 20px 40px;
             user-select: none;
             overflow-x: hidden;
@@ -81,18 +82,19 @@
 
         #aether-clock-wrap {
             text-align: center;
-            margin-top: 18px;
-            margin-bottom: 20px;
+            margin-top: 0;
+            margin-bottom: 26px;
         }
         #aether-clock {
-            font-size: 68px;
+            font-size: clamp(84px, 14vh, 150px);
+            line-height: 1;
             font-weight: 200;
-            letter-spacing: 2px;
+            letter-spacing: 3px;
             color: #ffffff;
-            text-shadow: 0 0 25px rgba(192, 132, 252, 0.45);
+            text-shadow: 0 0 32px rgba(192, 132, 252, 0.5);
         }
         #aether-date {
-            font-size: 15px;
+            font-size: clamp(16px, 2.4vh, 24px);
             font-weight: 400;
             color: #c084fc;
             text-transform: capitalize;
