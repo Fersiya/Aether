@@ -643,8 +643,12 @@
             const options = { weekday: 'long', day: 'numeric', month: 'long' };
             document.getElementById('aether-date').textContent = now.toLocaleDateString('ru-RU', options);
         }
-        setInterval(updateClock, 1000);
-        updateClock();
+        // Часы показывают только часы:минуты — просыпаемся раз в минуту, а не каждую секунду
+        function tickClock() {
+            updateClock();
+            setTimeout(tickClock, 60000 - (Date.now() % 60000) + 50);
+        }
+        tickClock();
 
         const POPULAR_SITES = [
             { name: 'YouTube', domain: 'youtube.com', url: 'https://www.youtube.com', icon: '▶' },

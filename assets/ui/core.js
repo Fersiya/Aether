@@ -1189,12 +1189,42 @@
         renderSidebar();
     });
 
+    // Слежение за заголовком страницы без опроса: MutationObserver по <head> просыпается
+    // только при реальном изменении <title> (раньше setInterval(500мс) на каждой странице).
     let prevTitle = "";
-    setInterval(() => {
-        if (document.title !== prevTitle) {
-            prevTitle = document.title;
-            updateCurrentTabInfo();
-            renderSidebar();
+    let titleTimer = 0;
+    function onTitleMaybeChanged() {
+        if (titleTimer) return; // схлопываем частые изменения в один проход
+        titleTimer = setTimeout(() => {
+            titleTimer = 0;
+            if (document.title !== prevTitle) {
+                prevTitle = document.title;
+                updateCurrentTabInfo();
+                renderSidebar();
+            }
+        }, 200);
+    }
+    function watchTitle() {
+        const head = document.head;
+        if (!head) return false;
+        new MutationObserver(onTitleMaybeChanged).observe(head, {
+            childList: true,
+            subtree: true,
+            characterData: true
+        });
+        onTitleMaybeChanged();
+        return true;
+    }
+    if (!watchTitle()) {
+        const root = document.documentElement;
+        if (root) {
+            // <head> ещё не создан: ждём его появления и сразу отключаем наблюдатель
+            const rootObserver = new MutationObserver(() => {
+                if (watchTitle()) rootObserver.disconnect();
+            });
+            rootObserver.observe(root, { childList: true });
+        } else {
+            document.addEventListener('DOMContentLoaded', watchTitle, { once: true });
         }
-    }, 500);
+    }
 })();
