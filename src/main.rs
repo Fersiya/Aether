@@ -18,6 +18,8 @@ use tao::{
 #[cfg(target_os = "windows")]
 use tao::platform::windows::WindowExtWindows;
 use wry::{dpi, http::Request, Rect, WebContext, WebView, WebViewBuilder};
+#[cfg(target_os = "windows")]
+use wry::{MemoryUsageLevel, WebViewExtWindows};
 
 const APP_NAME: &str = "Aether";
 const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -26,7 +28,11 @@ const ICON_RGBA: &[u8] = include_bytes!("../assets/icon_256.rgba");
 /// Сколько вкладок одновременно держит «живыми» (с запущенной страницей).
 /// Остальные выгружаются (адрес и заголовок сохраняются) и открываются заново при переходе на них.
 /// Вкладки, в которых играет звук/видео, не выгружаются никогда.
-const MAX_LIVE_TABS: usize = 8;
+const MAX_LIVE_TABS: usize = 10;
+/// Через сколько после скрытия вкладке урезается память (WebView2 «Low memory target»).
+/// Страница при этом не замораживается: звук, сообщения и таймеры работают, просто занимает меньше памяти.
+/// Небольшая пауза нужна, чтобы быстрое листание вкладок не дёргало движок.
+const TRIM_AFTER: Duration = Duration::from_secs(20);
 /// Пауза перед записью session.json и обновлением сайдбара после частых событий (смена заголовка).
 const FLUSH_DELAY: Duration = Duration::from_millis(600);
 
@@ -105,7 +111,21 @@ struct View {
     wv: WebView,
     last_used: u64,
     playing: bool,
+    /// Когда вкладку скрыли (None — она сейчас видима).
+    hidden_at: Option<Instant>,
+    /// Памяти уже урезана (нужно вернуть Normal при показе).
+    trimmed: bool,
 }
+
+/// Урезает (`low = true`) или возвращает (`false`) целевой объём памяти вкладки.
+/// Нужен WebView2 Runtime 114+, на старых версиях ничего не делает.
+#[cfg(target_os = "windows")]
+fn set_memory_low(wv: &WebView, low: bool) {
+    let _ = wv.set_memory_usage_level(if low { MemoryUsageLevel::Low } else { MemoryUsageLevel::Normal });
+}
+
+#[cfg(not(target_os = "windows"))]
+fn set_memory_low(_wv: &WebView, _low: bool) {}
 
 struct App {
     window: Window,
@@ -118,6 +138,7 @@ struct App {
     session_path: PathBuf,
     last_saved: String,
     flush_at: Option<Instant>,
+    sweep_at: Option<Instant>,
 }
 
 impl App {
@@ -174,7 +195,10 @@ impl App {
         match built {
             Ok(wv) => {
                 self.tick += 1;
-                self.views.insert(id, View { wv, last_used: self.tick, playing: false });
+                self.views.insert(
+                    id,
+                    View { wv, last_used: self.tick, playing: false, hidden_at: None, trimmed: false },
+                );
                 true
             }
             Err(e) => {
@@ -200,8 +224,11 @@ impl App {
         let prev = self.session.active;
         if prev != id {
             self.refresh_url(prev);
-            if let Some(v) = self.views.get(&prev) {
+            if let Some(v) = self.views.get_mut(&prev) {
                 let _ = v.wv.set_visible(false);
+                v.hidden_at = Some(Instant::now());
+                v.trimmed = false;
+                self.schedule_sweep();
             }
         }
         self.session.active = id;
@@ -214,6 +241,11 @@ impl App {
         let bounds = self.bounds();
         if let Some(v) = self.views.get_mut(&id) {
             v.last_used = self.tick;
+            if v.trimmed {
+                set_memory_low(&v.wv, false); // вернуть обычный режим до показа
+                v.trimmed = false;
+            }
+            v.hidden_at = None;
             let _ = v.wv.set_bounds(bounds);
             let _ = v.wv.set_visible(true);
             let _ = v.wv.focus();
@@ -222,6 +254,33 @@ impl App {
         self.evict();
         self.push_state();
         self.save_now();
+    }
+
+    fn schedule_sweep(&mut self) {
+        if self.sweep_at.is_none() {
+            self.sweep_at = Some(Instant::now() + TRIM_AFTER);
+        }
+    }
+
+    /// Урезает память вкладок, которые скрыты дольше TRIM_AFTER (кроме играющих медиа).
+    /// Таймер включён только пока есть кого урезать — в остальное время браузер не просыпается.
+    fn sweep(&mut self) {
+        let now = Instant::now();
+        let mut next: Option<Instant> = None;
+        for v in self.views.values_mut() {
+            let Some(hidden) = v.hidden_at else { continue };
+            if v.trimmed || v.playing {
+                continue;
+            }
+            let due = hidden + TRIM_AFTER;
+            if now >= due {
+                set_memory_low(&v.wv, true);
+                v.trimmed = true;
+            } else {
+                next = Some(next.map_or(due, |n| n.min(due)));
+            }
+        }
+        self.sweep_at = next;
     }
 
     /// Выгружает самые давние неактивные вкладки сверх лимита (кроме играющих медиа).
@@ -390,8 +449,18 @@ impl App {
                 self.close_tab(id);
             }
         } else if let Some(flag) = body.strip_prefix("tab_media:") {
+            let mut recheck = false;
             if let Some(v) = self.views.get_mut(&tab) {
                 v.playing = flag.trim() == "1";
+                if v.playing && v.trimmed {
+                    // началось воспроизведение в скрытой вкладке — вернуть обычный режим
+                    set_memory_low(&v.wv, false);
+                    v.trimmed = false;
+                }
+                recheck = !v.playing && v.hidden_at.is_some();
+            }
+            if recheck {
+                self.schedule_sweep(); // воспроизведение закончилось — вкладку теперь можно урезать
             }
         } else if let Some(enabled) = body.strip_prefix("set_fullscreen:") {
             if tab == self.session.active {
@@ -492,6 +561,7 @@ fn run_app() -> Result<(), Box<dyn std::error::Error>> {
         session_path,
         last_saved: String::new(),
         flush_at: None,
+        sweep_at: None,
     };
 
     // Открываем только активную вкладку — остальные оживут при первом переходе на них
@@ -516,12 +586,16 @@ fn run_app() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         if !matches!(*control_flow, ControlFlow::Exit) {
-            if let Some(at) = app.flush_at {
-                if Instant::now() >= at {
-                    app.flush();
-                } else {
-                    *control_flow = ControlFlow::WaitUntil(at);
-                }
+            let now = Instant::now();
+            if app.flush_at.is_some_and(|t| now >= t) {
+                app.flush();
+            }
+            if app.sweep_at.is_some_and(|t| now >= t) {
+                app.sweep();
+            }
+            // Просыпаемся только к ближайшему отложенному делу, иначе спим до события
+            if let Some(next) = [app.flush_at, app.sweep_at].into_iter().flatten().min() {
+                *control_flow = ControlFlow::WaitUntil(next);
             }
         }
     });

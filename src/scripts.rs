@@ -1,4 +1,4 @@
-//! Встроенный рантайм Aether Browser v0.7.0 (Arc / Zen Style).
+//! Встроенный рантайм Aether Browser v0.7.1 (Arc / Zen Style).
 //!
 //! HTML стартовой страницы и ядро JS лежат в `assets/ui/` и вшиваются в бинарник
 //! на этапе компиляции через `include_str!` — в рантайме это те же `&'static str`,
