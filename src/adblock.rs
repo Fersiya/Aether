@@ -60,6 +60,7 @@ pub fn host_of_url(url: &str) -> &str {
 /// Подключает блокировку к WebView2 вкладки.
 #[cfg(target_os = "windows")]
 pub fn install(wv: &wry::WebView) {
+    use wry::WebViewExtWindows;
     use webview2_com::take_pwstr;
     use webview2_com::Microsoft::Web::WebView2::Win32::{
         ICoreWebView2_2, COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL,
