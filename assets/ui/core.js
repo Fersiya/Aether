@@ -1140,18 +1140,13 @@
         } else if (ctrl && (e.key === 'p' || e.key === 'P' || e.key === 'з' || e.key === 'З')) {
             e.preventDefault();
             togglePiP();
+        } else if (e.shiftKey && e.key === 'Escape') {
+            // Диспетчер задач браузера: память и CPU по каждой вкладке и служебным процессам
+            e.preventDefault();
+            post("task_manager");
         }
     });
 
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', () => {
-            renderSidebar();
-            completeLoadProgress();
-        });
-    } else {
-        renderSidebar();
-        completeLoadProgress();
-    }
     // Медиа: сообщаем Rust, играет ли во вкладке звук/видео — такие вкладки не выгружаются из памяти
     let mediaPlaying = 0;
     function reportMedia(flag) {

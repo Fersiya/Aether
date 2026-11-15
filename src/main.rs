@@ -127,6 +127,25 @@ fn set_memory_low(wv: &WebView, low: bool) {
 #[cfg(not(target_os = "windows"))]
 fn set_memory_low(_wv: &WebView, _low: bool) {}
 
+/// Открывает встроенный «Диспетчер задач» WebView2: память и CPU каждой вкладки и служебных процессов
+/// (графика, сеть, звук…) с подписями на языке системы. Windows сама показывает процессы WebView2
+/// отдельной группой, а здесь они собраны в одном окне.
+#[cfg(target_os = "windows")]
+fn open_task_manager(wv: &WebView) {
+    use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2_6;
+    use windows_core::Interface;
+    unsafe {
+        if let Ok(core) = wv.controller().CoreWebView2() {
+            if let Ok(core6) = core.cast::<ICoreWebView2_6>() {
+                let _ = core6.OpenTaskManagerWindow();
+            }
+        }
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn open_task_manager(_wv: &WebView) {}
+
 struct App {
     window: Window,
     web_context: WebContext,
@@ -475,6 +494,10 @@ impl App {
                     let _ = std::fs::write(&self.cards_path, json);
                     self.push_state();
                 }
+            }
+        } else if body == "task_manager" {
+            if let Some(v) = self.views.get(&tab) {
+                open_task_manager(&v.wv);
             }
         } else if body == "open_log_in_explorer" {
             #[cfg(target_os = "windows")]
