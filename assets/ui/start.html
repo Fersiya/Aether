@@ -624,6 +624,7 @@
                 <span class="aether-s-tab active" id="tab-btn-history" onclick="switchSettingsTab('history')">🕒 История</span>
                 <span class="aether-s-tab" id="tab-btn-passwords" onclick="switchSettingsTab('passwords')">🔑 Пароли</span>
                 <span class="aether-s-tab" id="tab-btn-ui" onclick="switchSettingsTab('ui')">🎛️ Боковая панель</span>
+                <span class="aether-s-tab" id="tab-btn-adblock" onclick="switchSettingsTab('adblock')">🛡️ Блокировка рекламы</span>
                 <span class="aether-s-tab" id="tab-btn-diag" onclick="switchSettingsTab('diag')">📁 Логи и Диагностика</span>
             </div>
             <div class="aether-settings-content" id="settings-content-area"></div>
@@ -1107,6 +1108,7 @@
             if (tab === 'history') renderHistoryTab();
             else if (tab === 'passwords') renderPasswordsTab();
             else if (tab === 'ui') renderUiTab();
+            else if (tab === 'adblock') renderAdblockTab();
             else if (tab === 'diag') renderDiagTab();
         }
 
@@ -1246,6 +1248,27 @@
                 span.textContent = '••••••••';
                 span.style.letterSpacing = '2px';
             }
+        }
+
+        function renderAdblockTab() {
+            const area = document.getElementById('settings-content-area');
+            const st = window.__AETHER_STATE__ || {};
+            const on = st.adblock !== false;
+            area.innerHTML = `
+                <div style="display:flex; flex-direction:column; gap:14px;">
+                    <label style="display:flex; align-items:flex-start; gap:10px; cursor:pointer; background:rgba(255,255,255,0.03); padding:12px; border-radius:8px; border:1px solid rgba(255,255,255,0.08);">
+                        <input type="checkbox" ${on ? 'checked' : ''} onchange="setAdblock(this.checked)" />
+                        <div>
+                            <div style="font-weight:500; color:#fff;">Блокировать рекламу и трекеры</div>
+                            <div style="font-size:12px; color:#94a3b8; margin-top:2px;">Запросы к рекламным и следящим доменам отсекаются до загрузки: страницы грузятся быстрее и расходуют меньше памяти. Если сайт работает неправильно — выключите и обновите страницу.</div>
+                        </div>
+                    </label>
+                    <div style="font-size:13px; color:#94a3b8;">Заблокировано запросов за сеанс: <b style="color:#fff;">${st.blocked || 0}</b></div>
+                </div>`;
+        }
+        function setAdblock(v) {
+            if (window.__AETHER_STATE__) window.__AETHER_STATE__.adblock = v;
+            window.ipc.postMessage('set_adblock:' + (v ? 'true' : 'false'));
         }
 
         function renderUiTab() {

@@ -28,6 +28,12 @@ struct Saved {
     tabs: Vec<TabInfo>,
     #[serde(default)]
     visits: HashMap<String, u32>,
+    #[serde(default = "yes")]
+    adblock: bool,
+}
+
+fn yes() -> bool {
+    true
 }
 
 #[derive(Debug, PartialEq)]
@@ -44,6 +50,7 @@ pub struct Session {
     next_id: u32,
     visits: HashMap<String, u32>,
     pub cards: Value,
+    pub adblock: bool,
 }
 
 pub fn host_of(url: &str) -> String {
@@ -81,11 +88,13 @@ impl Session {
             next_id: 1,
             visits: HashMap::new(),
             cards,
+            adblock: true,
         };
 
         if let Some(sv) = saved {
             s.tabs = sv.tabs.into_iter().filter(|t| !t.url.trim().is_empty()).collect();
             s.visits = sv.visits;
+            s.adblock = sv.adblock;
             let max_id = s.tabs.iter().map(|t| t.id).max().unwrap_or(0);
             s.next_id = sv.next_id.max(max_id + 1);
             s.active = sv.active;
@@ -106,6 +115,7 @@ impl Session {
             next_id: self.next_id,
             tabs: self.tabs.clone(),
             visits: self.visits.clone(),
+            adblock: self.adblock,
         };
         serde_json::to_string(&saved).unwrap_or_default()
     }
@@ -117,6 +127,8 @@ impl Session {
             "tabs": self.tabs,
             "cards": self.cards,
             "visits": self.visits,
+            "adblock": self.adblock,
+            "blocked": crate::adblock::blocked_count(),
         })
         .to_string()
     }

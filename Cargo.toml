@@ -1,6 +1,6 @@
 [package]
 name = "aether-browser"
-version = "0.7.2"
+version = "0.8.0"
 edition = "2021"
 authors = ["Aether Team", "Claude <noreply@anthropic.com>"]
 description = "Aether Browser — Ультралегкий и быстрый медиа-браузер на Rust с защитой от рекламы, интеграцией Google, YouTube, VK и медиа-контролем."
@@ -16,6 +16,7 @@ serde_json = "1"
 [target.'cfg(windows)'.dependencies]
 webview2-com = "0.33"
 windows-core = "0.58"
+windows = { version = "0.58", features = ["Win32_System_Com", "Win32_System_WinRT"] }
 
 [target.'cfg(windows)'.build-dependencies]
 winres = "0.1"

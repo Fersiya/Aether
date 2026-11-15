@@ -1,5 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod adblock;
 mod scripts;
 mod session;
 
@@ -213,6 +214,7 @@ impl App {
 
         match built {
             Ok(wv) => {
+                adblock::install(&wv);
                 self.tick += 1;
                 self.views.insert(
                     id,
@@ -495,6 +497,14 @@ impl App {
                     self.push_state();
                 }
             }
+        } else if let Some(v) = body.strip_prefix("set_adblock:") {
+            if trusted {
+                let on = v.trim() == "true";
+                self.session.adblock = on;
+                adblock::set_enabled(on);
+                self.push_state();
+                self.schedule_flush();
+            }
         } else if body == "task_manager" {
             if let Some(v) = self.views.get(&tab) {
                 open_task_manager(&v.wv);
@@ -571,6 +581,7 @@ fn run_app() -> Result<(), Box<dyn std::error::Error>> {
 
     let session_path = profile_dir.join("session.json");
     let session = Session::load(&session_path, cards);
+    adblock::set_enabled(session.adblock);
     log_desktop(&format!("Восстановлено вкладок: {}", session.tabs.len()));
 
     let mut app = App {
