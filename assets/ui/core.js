@@ -1139,7 +1139,7 @@
     // 9. ГОРЯЧИЕ КЛАВИШИ БРАУЗЕРА
     window.addEventListener('keydown', (e) => {
         const ctrl = e.ctrlKey || e.metaKey;
-        if (ctrl && (e.key === 't' || e.key === 'T' || e.key === 'е' || e.key === 'Е')) {
+        if (ctrl && !e.shiftKey && (e.key === 't' || e.key === 'T' || e.key === 'е' || e.key === 'Е')) {
             e.preventDefault();
             createNewTab();
         } else if (ctrl && (e.key === 'w' || e.key === 'W' || e.key === 'ц' || e.key === 'Ц')) {
@@ -1166,6 +1166,12 @@
         } else if (ctrl && (e.key === 'p' || e.key === 'P' || e.key === 'з' || e.key === 'З')) {
             e.preventDefault();
             togglePiP();
+        } else if (ctrl && e.shiftKey && (e.key === 't' || e.key === 'T' || e.key === 'е' || e.key === 'Е')) {
+            e.preventDefault();
+            post("tab_reopen");
+        } else if (ctrl && e.key === 'Tab') {
+            e.preventDefault();
+            post("tab_cycle:" + (e.shiftKey ? -1 : 1));
         } else if (e.shiftKey && e.key === 'Escape') {
             // Диспетчер задач браузера: память и CPU по каждой вкладке и служебным процессам
             e.preventDefault();

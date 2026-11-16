@@ -51,6 +51,8 @@ pub struct Session {
     visits: HashMap<String, u32>,
     pub cards: Value,
     pub adblock: bool,
+    /// Недавно закрытые адреса (для Ctrl+Shift+T), на диск не пишутся.
+    closed: Vec<String>,
 }
 
 pub fn host_of(url: &str) -> String {
@@ -89,6 +91,7 @@ impl Session {
             visits: HashMap::new(),
             cards,
             adblock: true,
+            closed: Vec::new(),
         };
 
         if let Some(sv) = saved {
@@ -149,6 +152,12 @@ impl Session {
         let Some(idx) = self.tabs.iter().position(|t| t.id == id) else {
             return CloseResult::NotFound;
         };
+        if !is_start(&self.tabs[idx].url) {
+            self.closed.push(self.tabs[idx].url.clone());
+            if self.closed.len() > 20 {
+                self.closed.remove(0);
+            }
+        }
         if self.tabs.len() == 1 {
             let t = &mut self.tabs[0];
             t.url = START_URL.to_string();
@@ -161,6 +170,18 @@ impl Session {
             self.active = self.tabs[idx.saturating_sub(1).min(self.tabs.len() - 1)].id;
         }
         CloseResult::Removed { was_active }
+    }
+
+    /// Адрес последней закрытой вкладки (и убирает его из списка).
+    pub fn reopen(&mut self) -> Option<String> {
+        self.closed.pop()
+    }
+
+    /// Id вкладки на `delta` позиций от активной (по кругу) — для Ctrl+Tab.
+    pub fn neighbor(&self, delta: i32) -> u32 {
+        let n = self.tabs.len() as i32;
+        let i = self.tabs.iter().position(|t| t.id == self.active).unwrap_or(0) as i32;
+        self.tabs[(i + delta).rem_euclid(n) as usize].id
     }
 
     /// Первая вкладка со стартовой страницей (для «Домой»).
@@ -367,5 +388,40 @@ mod tests {
         assert!(s.cards.as_array().unwrap().is_empty());
         s.set_cards(json!([{"name": "A", "url": "https://a.b"}]));
         assert_eq!(s.cards.as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn reopen_closed_tabs_in_reverse_order() {
+        let mut s = Session::load(Path::new("/nonexistent/x.json"), Value::Null);
+        let a = s.add_tab("https://a.com/");
+        let b = s.add_tab("https://b.com/");
+        s.close(a);
+        s.close(b);
+        assert_eq!(s.reopen().as_deref(), Some("https://b.com/"));
+        assert_eq!(s.reopen().as_deref(), Some("https://a.com/"));
+        assert_eq!(s.reopen(), None);
+    }
+
+    #[test]
+    fn start_page_is_not_reopenable() {
+        let mut s = Session::load(Path::new("/nonexistent/x.json"), Value::Null);
+        let a = s.add_tab("https://a.com/");
+        let start = s.tabs[0].id;
+        s.close(start);
+        assert_eq!(s.reopen(), None);
+        s.close(a);
+        assert_eq!(s.reopen().as_deref(), Some("https://a.com/"));
+    }
+
+    #[test]
+    fn neighbor_wraps_around() {
+        let mut s = Session::load(Path::new("/nonexistent/x.json"), Value::Null);
+        let a = s.tabs[0].id;
+        let b = s.add_tab("https://b.com/");
+        s.active = a;
+        assert_eq!(s.neighbor(1), b);
+        assert_eq!(s.neighbor(-1), b);
+        s.active = b;
+        assert_eq!(s.neighbor(1), a);
     }
 }

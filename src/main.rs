@@ -472,6 +472,15 @@ impl App {
             if let Ok(id) = id.trim().parse::<u32>() {
                 self.activate(id);
             }
+        } else if body == "tab_reopen" {
+            if let Some(url) = self.session.reopen() {
+                self.new_tab(&url);
+            }
+        } else if let Some(d) = body.strip_prefix("tab_cycle:") {
+            if let Ok(d) = d.trim().parse::<i32>() {
+                let id = self.session.neighbor(d);
+                self.activate(id);
+            }
         } else if let Some(id) = body.strip_prefix("tab_close:") {
             if let Ok(id) = id.trim().parse::<u32>() {
                 self.close_tab(id);
