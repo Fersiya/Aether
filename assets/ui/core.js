@@ -13,6 +13,31 @@
         try { window.ipc.postMessage(msg); return true; } catch (_) { return false; }
     }
 
+    // Косметическая блокировка: прячем пустые рекламные блоки, оставшиеся после сетевой блокировки.
+    // Селекторы узкие (только известные рекламные контейнеры), чтобы не ломать вёрстку сайтов.
+    const AD_CSS = [
+        'ins.adsbygoogle', '[id^="google_ads_"]', '[id^="div-gpt-ad"]', '[data-ad-slot]',
+        'iframe[src*="doubleclick.net"]', 'iframe[src*="googlesyndication.com"]',
+        'iframe[src*="adnxs.com"]', 'iframe[src*="criteo."]', 'iframe[src*="taboola.com"]',
+        '[id^="yandex_rtb_"]', '[id^="adfox_"]', '[id^="taboola-"]', '.OUTBRAIN', '.trc_related_container'
+    ].join(',') + '{display:none!important}';
+    let adStyle = null;
+    function applyCosmetic() {
+        const st = window.__AETHER_STATE__;
+        const on = !st || st.adblock !== false;
+        const host = location.hostname;
+        if (host === 'aether.localhost') return;
+        if (on && !adStyle) {
+            adStyle = document.createElement('style');
+            adStyle.textContent = AD_CSS;
+            (document.head || document.documentElement).appendChild(adStyle);
+        } else if (!on && adStyle) {
+            adStyle.remove();
+            adStyle = null;
+        }
+    }
+    applyCosmetic();
+
     // 1. TRUSTED TYPES CSP BYPASS (YouTube, Google, GitHub)
     let aetherPolicy = {
         createHTML: (s) => s,
@@ -83,6 +108,7 @@
     // реально изменились и пользователь не печатает в омнибоксе; иначе — при следующем открытии.
     window.__aetherApplyState = function (state) {
         window.__AETHER_STATE__ = state;
+        applyCosmetic();
         if (stateSig(state) === lastSig) return;
         const ob = document.getElementById('aether-sb-omnibox');
         if (!isSidebarOpen || (ob && document.activeElement === ob)) {

@@ -20,7 +20,7 @@ use tao::{
 use tao::platform::windows::WindowExtWindows;
 use wry::{dpi, http::Request, Rect, WebContext, WebView, WebViewBuilder};
 #[cfg(target_os = "windows")]
-use wry::{MemoryUsageLevel, WebViewExtWindows};
+use wry::{MemoryUsageLevel, WebViewBuilderExtWindows, WebViewExtWindows};
 
 const APP_NAME: &str = "Aether";
 const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -179,7 +179,7 @@ impl App {
         let title_proxy = self.proxy.clone();
         let nav_proxy = self.proxy.clone();
 
-        let built = WebViewBuilder::with_web_context(&mut self.web_context)
+        let builder = WebViewBuilder::with_web_context(&mut self.web_context)
             .with_bounds(bounds)
             .with_clipboard(true)
             .with_devtools(true)
@@ -209,8 +209,15 @@ impl App {
                 let trusted = req.uri().host() == Some("aether.localhost");
                 let _ = ipc_proxy.send_event(UserEvent::Ipc { tab: id, trusted, body: req.into_body() });
             })
-            .with_url(url)
-            .build_as_child(&self.window);
+            .with_url(url);
+
+        // Базовые флаги wry сохраняем + отключаем фоновые сетевые запросы браузера (обновления, телеметрия).
+        #[cfg(target_os = "windows")]
+        let builder = builder.with_additional_browser_args(
+            "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --disable-background-networking",
+        );
+
+        let built = builder.build_as_child(&self.window);
 
         match built {
             Ok(wv) => {
