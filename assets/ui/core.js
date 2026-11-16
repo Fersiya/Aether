@@ -1197,7 +1197,13 @@
     document.addEventListener('ended', recheckMedia, true);
 
     function onDomReady() {
-        try { renderSidebar(); } finally { completeLoadProgress(); }
+        // Боковую панель строим в простое, чтобы не конкурировать с загрузкой страницы;
+        // если пользователь откроет её раньше — openSidebar дорисует её сам (sidebarDirty).
+        sidebarDirty = true;
+        const build = () => { try { if (sidebarDirty) renderSidebar(); } catch (_) {} };
+        if (window.requestIdleCallback) window.requestIdleCallback(build, { timeout: 1500 });
+        else setTimeout(build, 300);
+        completeLoadProgress();
     }
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', onDomReady, { once: true });
